@@ -1,0 +1,79 @@
+{
+  "250203957407887": {
+    "phone": "250203957407887",
+    "name": "crimson",
+    "nicknames": [
+      "serunjogi paul"
+    ],
+    "facts": [
+      "[",
+      "\"",
+      "j",
+      "u",
+      "s",
+      "t",
+      "m",
+      "e",
+      "]",
+      "'",
+      "l",
+      "i",
+      "v",
+      "n",
+      "K",
+      "a",
+      "p"
+    ],
+    "interests": [
+      "[",
+      "]"
+    ],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 75,
+    "last_seen": "2026-08-15T21:16:12.845118",
+    "first_seen": "2026-08-13T16:52:28.126076",
+    "is_creator": false
+  },
+  "250203957407887@lid": {
+    "phone": "250203957407887@lid",
+    "name": "crimson",
+    "nicknames": [],
+    "facts": [],
+    "interests": [],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 1,
+    "last_seen": "2026-08-13T23:51:00.969229",
+    "first_seen": "2026-08-13T23:51:00.969201",
+    "is_creator": false
+  },
+  "21106022990028": {
+    "phone": "21106022990028",
+    "name": "John Reigns",
+    "nicknames": [],
+    "facts": [],
+    "interests": [],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 26,
+    "last_seen": "2026-08-15T20:45:53.189481",
+    "first_seen": "2026-08-14T08:53:40.013663",
+    "is_creator": false
+  },
+  "197217012990036": {
+    "phone": "197217012990036",
+    "name": "Beekoh😜",
+    "nicknames": [
+      "Beekoh"
+    ],
+    "facts": [],
+    "interests": [],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 4,
+    "last_seen": "2026-08-14T12:09:51.837914",
+    "first_seen": "2026-08-14T11:00:40.066729",
+    "is_creator": false
+  }
+}

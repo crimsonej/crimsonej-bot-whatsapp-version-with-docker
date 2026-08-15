@@ -1,0 +1,8 @@
+flask
+requests
+python-dotenv
+duckduckgo-search
+ddgs
+gunicorn
+yt-dlp
+

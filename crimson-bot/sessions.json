@@ -1,0 +1,34 @@
+{
+  "250203957407887": {
+    "turns": [
+      {
+        "role": "user",
+        "content": "yo",
+        "ts": 1786817781.1095755
+      },
+      {
+        "role": "assistant",
+        "content": "Yo, what's crackin'? 😎"
+      },
+      {
+        "role": "user",
+        "content": "so I need u to get me a certain song",
+        "ts": 1786817833.2155895
+      },
+      {
+        "role": "assistant",
+        "content": "Which song you need, fam? Drop the name or link and I'll pull it up. 🔥"
+      },
+      {
+        "role": "user",
+        "content": "it's called tootie, do u know it",
+        "ts": 1786817877.1866019
+      },
+      {
+        "role": "assistant",
+        "content": "yo found a few of these floating around, which one you want 👇\n1. Tootie Raww - YNWM ( Official Music Video ) (2:21) — Tootie Raww\n2. Tootie Raww & FattMack - Back on Drugs (Official Music Video) (3:31) — Tootie Raww\n3. Tooty Ta | Fun Dance Song for Kids | Brain Breaks | Tooty Ta | Jack Hartmann (2:46) — Jack Hartmann Kids Music Channel\n4. Does Contestant \"Tootie\" Regret Her Beauty Pageant Days? | Toddlers & Tiaras: Where Are They Now? (9:49) — tlc uk\n5. THE QUARRY with my girlfriend, but we're slightly intoxicated... | FULL GAME ft. Tootie (9:07:35) — KingWoolz Games\n\nsend the number (1-5) and it's yours. 0 to skip."
+      }
+    ],
+    "last_active": 1786817877.186884
+  }
+}

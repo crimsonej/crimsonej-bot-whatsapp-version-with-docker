@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.Python
+
+# Environment
+.env
+.env.local
+*.key
+*.pem
+
+# Process IDs and logs
+.bot.pid
+.bridge.pid
+*.log
+
+# WhatsApp Auth (sensitive)
+whatsapp-bridge/auth_info_baileys/
+auth_info_baileys/
+
+# Runtime cache
+cache.json
+vectors.json
+*.cache
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+*.tmp
+temp/
+tmp/
