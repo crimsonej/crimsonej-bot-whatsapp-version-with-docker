@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -e
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
+
+echo -e "${BOLD}🚀 Installing Crimsonej Self-Aware WhatsApp Bot Environment...${NC}\n"
+
+# 1. System prerequisites check
+echo -e "${GREEN}[1/5] Checking System Prerequisites...${NC}"
+for cmd in python3 node npm ffmpeg; do
+    if ! command -v $cmd &> /dev/null; then
+        echo -e "${RED}[ERROR] Required system tool '$cmd' is not installed.${NC}"
+        echo -e "${YELLOW}Please install $cmd via your package manager (e.g. sudo apt install $cmd) and re-run ./install.${NC}"
+        exit 1
+    fi
+done
+echo "  ✓ Python3, Node.js, NPM, and FFmpeg found."
+
+# 2. Python Virtual Environment Setup in crimson-bot
+echo -e "\n${GREEN}[2/5] Setting up Python Virtual Environment in crimson-bot...${NC}"
+cd "$ROOT_DIR/crimson-bot"
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
+    echo "  ✓ Virtual environment created."
+else
+    echo "  ✓ Virtual environment already exists."
+fi
+
+# 3. Install Python Dependencies
+echo -e "\n${GREEN}[3/5] Installing Python Dependencies...${NC}"
+./venv/bin/pip install --upgrade pip -q
+if [ -f "requirements.txt" ]; then
+    ./venv/bin/pip install -r requirements.txt -q
+    echo "  ✓ Python requirements installed."
+fi
+
+# 4. Install Node.js Dependencies in whatsapp-bridge
+echo -e "\n${GREEN}[4/5] Installing Node.js Dependencies in whatsapp-bridge...${NC}"
+cd "$ROOT_DIR/whatsapp-bridge"
+npm install --silent
+echo "  ✓ NPM packages installed."
+
+# 5. Setting up CLI Executables
+echo -e "\n${GREEN}[5/5] Configuring Executables & CLI Shortcuts...${NC}"
+cd "$ROOT_DIR"
+chmod +x install setup crimsonej
+
+# Ensure ~/.local/bin exists
+mkdir -p "$HOME/.local/bin"
+
+# Symlink crimsonej to ~/.local/bin/crimsonej
+ln -sf "$ROOT_DIR/crimsonej" "$HOME/.local/bin/crimsonej"
+echo "  ✓ Symlinked 'crimsonej' to $HOME/.local/bin/crimsonej"
+
+# Ensure ~/.local/bin is in PATH
+if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+    SHELL_PROFILE=""
+    if [ -f "$HOME/.bashrc" ]; then
+        SHELL_PROFILE="$HOME/.bashrc"
+    elif [ -f "$HOME/.zshrc" ]; then
+        SHELL_PROFILE="$HOME/.zshrc"
+    elif [ -f "$HOME/.profile" ]; then
+        SHELL_PROFILE="$HOME/.profile"
+    fi
+
+    if [ -n "$SHELL_PROFILE" ]; then
+        # Check if already added to avoid duplicates
+        if ! grep -q "local/bin" "$SHELL_PROFILE" 2>/dev/null; then
+            echo -e "\n# Added by Crimsonej Installer\nexport PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$SHELL_PROFILE"
+            echo "  ✓ Added $HOME/.local/bin to PATH in $SHELL_PROFILE"
+        fi
+        echo -e "  ${YELLOW}👉 Run 'source $SHELL_PROFILE' or open a new terminal to start using the global 'crimsonej' command!${NC}"
+    fi
+else
+    echo "  ✓ '$HOME/.local/bin' is already in your PATH."
+fi
+
+echo -e "\n${BOLD}${GREEN}✨ Installation Complete! ✨${NC}"
+echo -e "Next step: Run ${BOLD}crimsonej setup${NC} to configure your API keys and settings."
