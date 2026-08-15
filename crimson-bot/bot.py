@@ -502,16 +502,9 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
     def tool_exec_wrapper(tool_calls, msgs, uid, sjid):
         return execute_tool_calls(tool_calls, msgs, uid, sjid, media_service=media_svc, vision_service=vision_svc)
 
-    # Prevent uncertain media/tool requests from ever reaching the LLM tool path.
-    clarification = _needs_clarification_for_media(question)
-    if clarification:
-        session.add("user", question, message_id=message_id, ts=time.time())
-        session.add("assistant", clarification)
-        return {"reply": clarification}
-
-    # Keep one visible brain in charge. The old quick-scout path returned a fast
-    # answer before tool-capable reasoning finished, which made media/tool flows
-    # silently fail and made Crimsonej feel split between two personalities.
+    # Let the LLM think and adapt naturally. It has full conversation context
+    # and can decide when to search, when to ask for clarification, or when to
+    # refine a search based on the user's feedback. No hardcoded gates.
 
     reply = call_llm(messages, tools=ALL_TOOLS, tool_executor_fn=tool_exec_wrapper, user_id=user_id, sender_jid=sender)
     reply_text = reply.get("reply", "") if isinstance(reply, dict) else str(reply)
