@@ -11,7 +11,7 @@ A friendly, smart bot that lives in your WhatsApp. Remembers you, searches the w
 | Feature | Example |
 |---------|---------|
 | **Chat naturally** | "yo what's up" → "Yo! What's good?" |
-| **Remember you** | "I'm from Kampala" → recalls it forever |
+| **Remember you** | "I'm from " → recalls it forever |
 | **Search the web** | "what's the weather in Tokyo?" → live answer |
 | **Generate images** | `/imagine a lion in space` → AI art |
 | **Download music/video** | `/song-audio Shape of You` → audio file |
