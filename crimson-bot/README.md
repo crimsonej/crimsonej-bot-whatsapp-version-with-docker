@@ -1,8 +1,8 @@
 # Crimsonej Bot (AI Engine) 🤖
 
-The Flask + LLM core powering Crimsonej — handles WhatsApp messages, RAG, tools, and the trading coach.
+The Flask + LLM core powering Crimsonej — a friendly WhatsApp companion with optional trading coach capabilities.
 
-## Quick Start (from crimson-bot/)
+## Quick Start
 
 ```bash
 cd crimson-bot
@@ -21,16 +21,29 @@ crimsonej start       # from parent dir, or: python bot.py server
 
 ## Slash Commands
 
-### Trading Coach
+### Core Features
 | Command | Description |
 |---------|-------------|
-| `/analyze <symbol> [interval]` | Full TA with chart, bias, levels, patterns |
+| `/help` | Full command list |
+| `/imagine <prompt>` | AI image generation (HF/Pollinations) |
+| `/sticker <prompt>` | AI sticker generation |
+| `/song-audio <query>` | YouTube audio search/download |
+| `/song-video <query>` | YouTube video search/download |
+| `/reg-img [prompt]` | Image analysis (NVIDIA VLM) |
+| `/read [prompt]` | Summarize attached document |
+| `/learn [text]` | Store in permanent memory |
+| `/respond <prompt>` | Direct reply to quoted message |
+
+### Trading Coach (Add-on — activated by user request)
+| Command | Description |
+|---------|-------------|
+| `/analyze <symbol> [interval]` | Full TA with chart, bias (🟢/🔴/⏸️), levels, patterns |
 | `/mtf <symbol>` | Multi-timeframe alignment (Daily/4H/1H) |
 | `/patterns <symbol> [interval]` | Detect chart patterns |
 | `/walkthrough <symbol> [interval]` | Step-by-step chart breakdown |
 | `/teach <topic>` | 13 lessons: candlesticks, structure, risk, RSI, MACD, EMAs, volume, MTF, liquidity, journaling, psychology, sessions |
 | `/lessons` | List all lesson topics |
-| `/quiz [topic]` | Interactive quiz (candlesticks, risk, RSI, MTF, S/R, liquidity, journaling) |
+| `/quiz [topic]` | Interactive quiz |
 | `/quiz_answer <topic> <0-3>` | Submit quiz answer |
 | `/journal log <trade>` | Log trade: symbol side entry sl tp size result [pnl] [r] [setup] [notes] |
 | `/journal stats` | Win rate, expectancy, avg R, setup breakdown |
@@ -39,19 +52,6 @@ crimsonej start       # from parent dir, or: python bot.py server
 | `/briefing_subscribe [pre_london\|eod\|both] [topics...]` | Group subscription (07:30/21:30 EAT) |
 | `/briefing_unsubscribe` | Stop group briefings |
 | `/briefing_list` | List active subscriptions |
-
-### General
-| Command | Description |
-|---------|-------------|
-| `/help` | Full command list |
-| `/imagine <prompt>` | AI image generation |
-| `/sticker <prompt>` | AI sticker generation |
-| `/song-audio <query>` | YouTube audio search/download |
-| `/song-video <query>` | YouTube video search/download |
-| `/reg-img [prompt]` | Image analysis (NVIDIA VLM) |
-| `/read [prompt]` | Summarize attached document |
-| `/learn [text]` | Store in permanent memory |
-| `/respond <prompt>` | Direct reply to quoted message |
 
 ### Master Control (Creator Only)
 | Command | Description |
@@ -68,11 +68,11 @@ crimsonej start       # from parent dir, or: python bot.py server
 
 ## LLM Tools (31 Total)
 
-### Trading (15)
-`analyze_market`, `teach_concept`, `list_lessons`, `manage_watchlist`, `daily_briefing`, `quick_price`, `trading_quiz`, `quiz_answer`, `live_walkthrough`, `multi_timeframe_analysis`, `detect_patterns`, `journal_trade`, `journal_stats`, `subscribe_briefing`, `unsubscribe_briefing`, `list_briefings`
+### Core (16)
+`web_search`, `analyze_image`, `generate_image`, `generate_sticker`, `download_audio`, `download_video`, `post_status`, `update_user_profile`, `update_preferences`, `self_aware`, `run_self_heal`, `schedule_task`, `list_tasks`, `cancel_task`, `run_task`, `manage_watchlist`
 
-### General
-`web_search`, `analyze_image`, `generate_image`, `generate_sticker`, `download_audio`, `download_video`, `post_status`, `update_user_profile`, `update_preferences`, `self_aware`, `run_self_heal`, `schedule_task`, `list_tasks`, `cancel_task`, `run_task`
+### Trading Coach (15) — loaded but only used when user asks
+`analyze_market`, `teach_concept`, `list_lessons`, `daily_briefing`, `quick_price`, `trading_quiz`, `quiz_answer`, `live_walkthrough`, `multi_timeframe_analysis`, `detect_patterns`, `journal_trade`, `journal_stats`, `subscribe_briefing`, `unsubscribe_briefing`, `list_briefings`
 
 ## Configuration
 
@@ -95,11 +95,11 @@ Edit `config.json` or use `master control config`:
 }
 ```
 
-Environment variables (`.env`):
+Environment (`.env`):
 ```
 GROQ_API_KEY=...
-NVIDIA_API_KEY=...      # for vision
-HF_API_KEY=...          # for image gen
+NVIDIA_API_KEY=...      # vision
+HF_API_KEY=...          # image gen
 BOT_PORT=5000
 ```
 
@@ -125,9 +125,9 @@ crimson-bot/
 │   └── ... (health, reporter, autofix, etc.)
 ├── data/
 │   ├── trading_lessons.json
- │   ├── user_watchlists.json
- │   ├── trade_journal.json
- │   └── briefing_subscriptions.json
+│   ├── user_watchlists.json
+│   ├── trade_journal.json
+│   └── briefing_subscriptions.json
 ├── trading/cache/charts/     # Generated chart PNGs
 └── sessions.json / vectors.json / user_profiles.json
 ```

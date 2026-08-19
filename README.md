@@ -1,43 +1,44 @@
-# Crimsonej — AI Trading Coach + WhatsApp Bot
+# Crimsonej — Your WhatsApp AI Companion
 
-A pro-level trading coach that lives in your WhatsApp. Analyzes real markets, teaches concepts, tracks your journal, and briefs you daily — all from natural conversation.
+A friendly, smart bot that lives in your WhatsApp. Remembers you, searches the web, generates images, downloads media — and if you want, helps you understand markets.
 
 ## Core Identity
 
-**Crimsonej** — your trading partner built by Crimson (Elijah). Manchester City fan. Hates Liverpool. Speaks human.
+**Crimsonej** — built by Crimson (Elijah). Manchester City fan. Hates Liverpool. Speaks human, not bot.
 
-## Trading Coach Features
+## What It Does
 
-| Feature | Commands / Natural Language |
-|---------|----------------------------|
-| **Market Analysis** | `/analyze BTC 4h` — full TA with chart, bias (🟢/🔴/⏸️), key levels, patterns |
-| **Multi-Timeframe** | `/mtf BTC` — HTF (Daily) / MTF (4H) / LTF (1H) alignment |
-| **Pattern Detection** | `/patterns BTC 4h` — double top/bottom, H&S, flags, triangles, wedges |
-| **Live Walkthrough** | `/walkthrough BTC 4h` — step-by-step HTF→LTF breakdown with action plan |
-| **Lessons (13)** | `/teach risk_management` — candlesticks, structure, S/R, risk, RSI, MACD, MTF, liquidity, journaling, psychology, sessions |
-| **Interactive Quiz** | `/quiz candlesticks` → `/quiz_answer candlesticks 1` — learn by doing |
-| **Trade Journal** | `/journal log BTC long 50000 49000 52000 0.1 win 300 3 bull_flag` — track trades |
-| **Stats Dashboard** | `/journal stats` — win rate, expectancy, avg R, setup breakdown |
-| **Daily Briefings** | `/brief pre_london` (07:30 EAT) / `/brief eod` (21:30 EAT) — 9 pairs with bias |
-| **Group Subscriptions** | `/briefing_subscribe both BTC ETH EURUSD` — auto-post to groups at 07:30/21:30 EAT |
-| **Quick Prices** | `/price BTC ETH EURUSD GOLD` — multi-symbol check |
+| Feature | Example |
+|---------|---------|
+| **Chat naturally** | "yo what's up" → "Yo! What's good?" |
+| **Remember you** | "I'm from Kampala" → recalls it forever |
+| **Search the web** | "what's the weather in Tokyo?" → live answer |
+| **Generate images** | `/imagine a lion in space` → AI art |
+| **Download music/video** | `/song-audio Shape of You` → audio file |
+| **Analyze images** | Send a photo → "that's a sunset over mountains" |
+| **Read documents** | Send PDF → "summary: ..." |
+| **Learn facts** | `/learn I love ugali` → stored permanently |
 
-## Natural Language (Just Talk)
+## Trading Coach (Optional Add-on)
 
-> "what's BTC doing on the 4h?"
-> "teach me risk management"
-> "post daily news in this group for BTC and ETH"
-> "show my trading stats"
-> "quiz me on candlesticks"
+*Only if you ask for it.*
 
-The LLM detects intent and calls the right tools automatically.
+| Feature | Command |
+|---------|---------|
+| Market analysis | `/analyze BTC 4h` — TA with chart, bias (🟢/🔴/⏸️) |
+| Learn concepts | `/teach risk_management` — 13 lessons |
+| Trade journal | `/journal log ...` — track your trades |
+| Daily briefing | `/brief pre_london` — 9 pairs at 07:30/21:30 EAT |
+| Group auto-post | `/briefing_subscribe both BTC ETH` — posts to group |
+
+> Just say: *"what's BTC doing?"* or *"teach me candlesticks"* — the bot detects and responds.
 
 ## Quick Start
 
 ```bash
 git clone <repo>
 cd crimsonej
-python3 install.py        # sets up venv, deps, bridge
+python3 install.py        # sets up venv, deps, WhatsApp bridge
 crimsonej start           # starts bot + bridge
 ```
 
@@ -48,52 +49,53 @@ crimsonej start           # starts bot + bridge
 | `crimsonej start` | Start bot + WhatsApp bridge |
 | `crimsonej stop` | Stop everything |
 | `crimsonej status` | Show PIDs, health, docs count |
-| `crimsonej logs [bot\|bridge]` | Tail logs |
-| `crimsonej reindex` | Rebuild RAG index from `docs/` |
+| `crimsonej logs` | Tail logs |
+| `crimsonej reindex` | Rebuild knowledge from `docs/` |
+
+## In-Chat Commands (Slash)
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Full list |
+| `/imagine <prompt>` | AI image |
+| `/sticker <prompt>` | AI sticker |
+| `/song-audio <query>` | YouTube audio |
+| `/song-video <query>` | YouTube video |
+| `/reg-img` | Analyze attached image |
+| `/read` | Summarize document |
+| `/learn` | Store in memory |
+| `/respond` | Reply to quoted msg |
+
+**Trading (when you ask):**
+`/analyze`, `/teach`, `/walkthrough`, `/quiz`, `/journal`, `/brief`, `/price`, `/mtf`, `/patterns`, `/briefing_subscribe`
+
+## Master Control (Creator Only)
+
+`master control chela` → authenticates you. Then:
+- `status_posting on/off`
+- `scheduler on/off`
+- `interval 4`
+- `topic add "market update"`
+- `wipe cache / memory`
 
 ## Architecture
 
 ```
-WhatsApp → Bridge (Node.js) → Flask API (bot.py) → LLM + Tools
-                                              ├── Market Data (Binance, CoinGecko, yfinance)
-                                              ├── Technical Analysis (pure Python)
-                                              ├── Chart Rendering (matplotlib)
-                                              ├── Lessons / Quiz / Journal
-                                              └── Scheduler (07:30/21:30 EAT)
+WhatsApp → Node.js Bridge → Flask API → LLM + Tools
+                                    ├── Web Search (DuckDuckGo)
+                                    ├── Image Gen (HF/Pollinations)
+                                    ├── Media (yt-dlp)
+                                    ├── RAG (TF-IDF + local docs)
+                                    ├── Profiles / Memory / Vaults
+                                    └── Trading Coach (Binance, CoinGecko, yfinance)
 ```
 
-## Data Sources (Free, No Keys)
+## Data & Privacy
 
-- **Binance Public REST** — Crypto OHLCV, 24h ticker, order book
-- **CoinGecko** — Crypto prices, market cap
-- **yfinance (Yahoo Finance)** — Stocks, forex, indices, commodities, bonds
+- **Local-first**: Sessions, profiles, journals stored as JSON on your machine
+- **No API keys required** for trading data (Binance public, CoinGecko, yfinance)
+- **Your keys stay in `.env`** — Groq, NVIDIA, HuggingFace only
 
-## Requirements
+## Built By
 
-- Python 3.10+
-- Node.js 18+ (for WhatsApp bridge)
-- Groq API Key (for LLM)
-- Optional: NVIDIA API Key (vision), HF API Key (images)
-
-## Project Structure
-
-```
-crimsonej/
-├── crimson-bot/
-│   ├── bot.py                    # Flask app, slash commands, LLM tools
-│   ├── core/
-│   │   ├── market_data.py        # Binance / CoinGecko / yfinance clients
-│   │   ├── trading_ta.py         # RSI, MACD, EMA, structure, patterns, MTF
-│   │   └── chart_render.py       # matplotlib candlestick charts
-│   ├── services/
-│   │   ├── trading.py            # Analysis, lessons, journal, briefings, subs
-│   │   ├── trading_scheduler.py  # Daily briefings at 07:30/21:30 EAT
-│   │   └── tools.py              # 31 LLM tools (15 trading)
-│   └── data/                     # lessons, watchlists, journal, subscriptions
-├── whatsapp-bridge/              # Baileys Node.js bridge
-└── orchestrator.py               # Process manager (crimsonej CLI)
-```
-
-## Credits
-
-Built by **Crimson (Elijah)**. Your trading partner in the group chat.
+**Crimson (Elijah)** — for the group chat that needed a real one.
