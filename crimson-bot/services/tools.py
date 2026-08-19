@@ -604,6 +604,55 @@ JOURNAL_STATS_TOOL = {
     }
 }
 
+# ── Briefing Subscription Tools ────────────────────────────────────────────────
+SUBSCRIBE_BRIEFING_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "subscribe_briefing",
+        "description": "Subscribe the current group to daily trading briefings. Use when user says 'post daily news in this group', 'add daily briefing here', 'subscribe to briefings'. Requires group context.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sessions": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["pre_london", "eod"]},
+                    "description": "Which briefings: pre_london (07:30 EAT), eod (21:30 EAT). Default both.",
+                    "default": ["pre_london", "eod"]
+                },
+                "topics": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Pairs to include (e.g. ['BTC', 'ETH', 'EURUSD', 'GOLD']). Max 15. Empty = all major pairs."
+                }
+            }
+        }
+    }
+}
+
+UNSUBSCRIBE_BRIEFING_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "unsubscribe_briefing",
+        "description": "Unsubscribe the current group from daily trading briefings. Use when user says 'stop daily briefings', 'unsubscribe from news', 'stop posting here'. Requires group context.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    }
+}
+
+LIST_BRIEFINGS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "list_briefings",
+        "description": "List all active group briefing subscriptions. Use when user asks 'what briefings are running', 'show subscriptions'.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    }
+}
+
 ALL_TOOLS = [
     WEB_SEARCH_TOOL,
     ANALYZE_IMAGE_TOOL,
@@ -633,6 +682,9 @@ ALL_TOOLS = [
     PATTERNS_TOOL,
     JOURNAL_TRADE_TOOL,
     JOURNAL_STATS_TOOL,
+    SUBSCRIBE_BRIEFING_TOOL,
+    UNSUBSCRIBE_BRIEFING_TOOL,
+    LIST_BRIEFINGS_TOOL,
 ]
 
 def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_service=None, vision_service=None) -> dict:
@@ -1173,6 +1225,52 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
                     reply += f"\n  {setup}: {data['wins']}W/{data['losses']}L ({wr:.0f}% WR) | {data['total_r']:.2f}R"
             messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
                              "content": json.dumps({"ok": True, "reply": reply, "stats": stats})})
+            return {**tool_results, "reply": reply}
+
+        elif name == "subscribe_briefing":
+            from services.trading import subscribe_group
+            sessions = args.get("sessions", ["pre_london", "eod"])
+            topics = args.get("topics", [])
+            # sender_jid is the group JID in group chats
+            if not sender_jid or not sender_jid.endswith("@g.us"):
+                reply = "This only works in groups. Add me to a group first."
+            else:
+                res = subscribe_group(sender_jid, user_id, sessions, topics)
+                if res["ok"]:
+                    sub = res["subscription"]
+                    sess_str = ", ".join(sub["sessions"])
+                    topic_str = ", ".join(sub["topics"]) if sub["topics"] else "all major pairs"
+                    reply = f"✅ Subscribed this group to {sess_str} briefing with: {topic_str}"
+                else:
+                    reply = f"Failed: {res.get('message', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
+                             "content": json.dumps({"ok": True, "reply": reply})})
+            return {**tool_results, "reply": reply}
+
+        elif name == "unsubscribe_briefing":
+            from services.trading import unsubscribe_group
+            if not sender_jid or not sender_jid.endswith("@g.us"):
+                reply = "Run this in the group you want to unsubscribe."
+            else:
+                res = unsubscribe_group(sender_jid)
+                reply = res["message"]
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
+                             "content": json.dumps({"ok": True, "reply": reply})})
+            return {**tool_results, "reply": reply}
+
+        elif name == "list_briefings":
+            from services.trading import list_subscriptions
+            subs = list_subscriptions()
+            if not subs:
+                reply = "No active group subscriptions."
+            else:
+                lines = ["📋 **Active Briefing Subscriptions:**"]
+                for s in subs:
+                    topics = ", ".join(s["topics"]) if s["topics"] else "all major"
+                    lines.append(f"  {s['group_jid'].split('@')[0]} — {', '.join(s['sessions'])} — {topics}")
+                reply = "\n".join(lines)
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
+                             "content": json.dumps({"ok": True, "reply": reply})})
             return {**tool_results, "reply": reply}
 
     return tool_results

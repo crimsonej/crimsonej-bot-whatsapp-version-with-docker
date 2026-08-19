@@ -452,6 +452,156 @@ def post_briefing_to_owner(bridge_api, session: str = "pre_london") -> bool:
         return False
 
 
+# ── Group Subscriptions ────────────────────────────────────────────────────────
+# Max topics per subscription to keep briefings concise
+MAX_BRIEFING_TOPICS = 15
+
+_SUBSCRIPTIONS_FILE = os.path.join(_DATA_DIR, "briefing_subscriptions.json")
+_subscriptions_lock = threading.Lock()
+_subscriptions_cache: dict[str, dict] = {}  # group_jid -> {sessions, topics, enabled, added_by, added_at}
+
+
+def _load_subscriptions() -> dict:
+    global _subscriptions_cache
+    with _subscriptions_lock:
+        if _subscriptions_cache:
+            return _subscriptions_cache
+        if os.path.exists(_SUBSCRIPTIONS_FILE):
+            try:
+                with open(_SUBSCRIPTIONS_FILE, "r", encoding="utf-8") as f:
+                    _subscriptions_cache = json.load(f)
+            except Exception:
+                _subscriptions_cache = {}
+        return _subscriptions_cache
+
+
+def _save_subscriptions() -> None:
+    with _subscriptions_lock:
+        with open(_SUBSCRIPTIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(_subscriptions_cache, f, indent=2)
+
+
+def get_subscription(group_jid: str) -> dict | None:
+    """Get subscription config for a group."""
+    subs = _load_subscriptions()
+    return subs.get(group_jid)
+
+
+def subscribe_group(group_jid: str, user_id: str, sessions: list[str] = None, topics: list[str] = None) -> dict:
+    """Subscribe a group to daily briefings.
+
+    sessions: ['pre_london', 'eod'] (default both)
+    topics: list of symbols (e.g. ['BTC', 'ETH', 'EURUSD', 'GOLD']) - max MAX_BRIEFING_TOPICS
+    """
+    subs = _load_subscriptions()
+
+    # Validate sessions
+    valid_sessions = {"pre_london", "eod"}
+    sessions = sessions or ["pre_london", "eod"]
+    sessions = [s for s in sessions if s in valid_sessions]
+    if not sessions:
+        sessions = ["pre_london", "eod"]
+
+    # Validate topics - just format check, no network calls
+    if topics:
+        topics = [t.upper().strip() for t in topics]
+        topics = topics[:MAX_BRIEFING_TOPICS]
+    else:
+        topics = []
+
+    sub = {
+        "sessions": sessions,
+        "topics": topics,
+        "enabled": True,
+        "added_by": user_id,
+        "added_at": datetime.now(TZ).isoformat(),
+    }
+    subs[group_jid] = sub
+    _save_subscriptions()
+    return {"ok": True, "subscription": sub}
+
+
+def unsubscribe_group(group_jid: str) -> dict:
+    """Unsubscribe a group from briefings."""
+    subs = _load_subscriptions()
+    if group_jid in subs:
+        del subs[group_jid]
+        _save_subscriptions()
+        return {"ok": True, "message": "Unsubscribed"}
+    return {"ok": False, "message": "Not subscribed"}
+
+
+def list_subscriptions() -> list[dict]:
+    """List all active subscriptions."""
+    subs = _load_subscriptions()
+    return [{"group_jid": k, **v} for k, v in subs.items() if v.get("enabled")]
+
+
+def generate_custom_briefing(session: str, topics: list[str]) -> dict:
+    """Generate briefing for specific topics only."""
+    if not topics:
+        return generate_daily_briefing(session)
+
+    now = datetime.now(TZ)
+    analyses = []
+
+    for sym in topics:
+        res = analyze_symbol(sym, "4h", 100)
+        if "error" not in res:
+            analyses.append({
+                "symbol": res["symbol"],
+                "bias": res["bias"],
+                "confidence": res["confidence"],
+                "price": res["price"],
+                "trend": res["structure"],
+            })
+
+    if session == "pre_london":
+        header = "☀️ **Pre-London Brief (Custom)**"
+        focus = "Your selected pairs — Asia recap, London levels"
+    else:
+        header = "🌙 **End-of-Day Wrap (Custom)**"
+        focus = "Your selected pairs — today's moves, tomorrow's setup"
+
+    lines = [header, f"*{now.strftime('%a %d %b %Y %H:%M %Z')}* — {focus}", ""]
+    for a in analyses:
+        icon = "🟢" if a["bias"] == "bullish" else ("🔴" if a["bias"] == "bearish" else "⏸️")
+        lines.append(f"{icon} **{a['symbol']}** {a['price']:,.2f} — {a['bias'].upper()} ({a['confidence']}%) | {a['trend']}")
+
+    lines.append("")
+    lines.append("_Custom briefing for your selected pairs. Bias = educational lean, not a signal._")
+
+    return {
+        "session": session,
+        "text": "\n".join(lines),
+        "analyses": analyses,
+        "timestamp": now.isoformat(),
+    }
+
+
+def post_briefing_to_groups(bridge_api, session: str = "pre_london") -> int:
+    """Post briefings to all subscribed groups for the session."""
+    subs = _load_subscriptions()
+    posted = 0
+
+    for group_jid, sub in subs.items():
+        if not sub.get("enabled"):
+            continue
+        if session not in sub.get("sessions", ["pre_london", "eod"]):
+            continue
+
+        try:
+            topics = sub.get("topics", [])
+            brief = generate_custom_briefing(session, topics)
+            bridge_api.bridge_send(group_jid, brief["text"])
+            posted += 1
+            log.info("[Trading] Posted %s briefing to group %s", session, group_jid.split("@")[0])
+        except Exception as exc:
+            log.error("[Trading] Failed to post to group %s: %s", group_jid, exc)
+
+    return posted
+
+
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
 def cleanup() -> None:

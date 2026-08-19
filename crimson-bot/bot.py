@@ -44,6 +44,7 @@ import services.vision as vision_svc
 import services.media as media_svc
 import services.bridge_api as bridge_api
 from services.scheduler import start_scheduler, stop_scheduler, restart_scheduler, trigger_now
+from services.trading import MAX_BRIEFING_TOPICS
 
 # ── Flask App Setup ──────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -582,6 +583,65 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
                 lines.append(f"⚪ {r['symbol']}: no data")
         return {"reply": "\n".join(lines)}
 
+    if lower.startswith("/briefing_subscribe") or lower.startswith("/brief_sub"):
+        parts = raw_question.split()
+        if len(parts) < 2:
+            return {"reply": (
+                "Usage: `/briefing_subscribe [pre_london|eod|both] [BTC ETH EURUSD GOLD ...]`\n"
+                "Examples:\n"
+                "  `/briefing_subscribe both BTC ETH EURUSD` — both sessions, 3 pairs\n"
+                "  `/briefing_subscribe pre_london BTC GOLD` — pre-London only\n"
+                f"Max {MAX_BRIEFING_TOPICS} topics. Use `/briefing_unsubscribe` to stop."
+            )}
+        # Parse: first arg could be session or topic
+        valid_sessions = {"pre_london", "eod", "both"}
+        sessions = []
+        topics = []
+        for p in parts[1:]:
+            pl = p.lower()
+            if pl in valid_sessions:
+                if pl == "both":
+                    sessions = ["pre_london", "eod"]
+                else:
+                    sessions.append(pl)
+            else:
+                topics.append(p.upper())
+        if not sessions:
+            sessions = ["pre_london", "eod"]
+        # Only allow in groups — check if session_id is a group JID
+        is_group_chat = session_id.endswith("@g.us")
+        if not is_group_chat:
+            return {"reply": "This command only works in groups. Add me to a group and run it there."}
+        group_jid = session_id  # session_id is the group JID in group chats
+        from services.trading import subscribe_group
+        res = subscribe_group(group_jid, user_phone, sessions, topics)
+        if res["ok"]:
+            sub = res["subscription"]
+            sess_str = ", ".join(sub["sessions"])
+            topic_str = ", ".join(sub["topics"]) if sub["topics"] else "all major pairs"
+            return {"reply": f"✅ Subscribed this group to {sess_str} briefing with: {topic_str}"}
+        return {"reply": f"Failed: {res.get('message', 'unknown error')}"}
+
+    if lower.startswith("/briefing_unsubscribe") or lower.startswith("/brief_unsub"):
+        is_group_chat = session_id.endswith("@g.us")
+        if not is_group_chat:
+            return {"reply": "Run this in the group you want to unsubscribe."}
+        group_jid = session_id
+        from services.trading import unsubscribe_group
+        res = unsubscribe_group(group_jid)
+        return {"reply": res["message"]}
+
+    if lower.startswith("/briefing_list") or lower.startswith("/brief_list"):
+        from services.trading import list_subscriptions
+        subs = list_subscriptions()
+        if not subs:
+            return {"reply": "No active group subscriptions."}
+        lines = ["📋 **Active Briefing Subscriptions:**"]
+        for s in subs:
+            topics = ", ".join(s["topics"]) if s["topics"] else "all major"
+            lines.append(f"  {s['group_jid'].split('@')[0]} — {', '.join(s['sessions'])} — {topics}")
+        return {"reply": "\n".join(lines)}
+
     if lower.startswith("/brief"):
         parts = raw_question.split()
         session = parts[1].lower() if len(parts) >= 2 else "pre_london"
@@ -732,6 +792,64 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
             res = add_trade_journal(user_phone, trade)
             return {"reply": f"Trade logged: {symbol} {side.upper()} @ {entry} — {result_trade.upper()} ({r_multiple}R)"}
         return {"reply": "Subcommand must be 'log' or 'stats'"}
+
+    # ── Briefing Subscriptions ──────────────────────────────────────────────────
+    if lower.startswith("/briefing_subscribe") or lower.startswith("/brief_sub"):
+        parts = raw_question.split()
+        if len(parts) < 2:
+            return {"reply": (
+                "Usage: `/briefing_subscribe [pre_london|eod|both] [BTC ETH EURUSD GOLD ...]`\n"
+                "Examples:\n"
+                "  `/briefing_subscribe both BTC ETH EURUSD` — both sessions, 3 pairs\n"
+                "  `/briefing_subscribe pre_london BTC GOLD` — pre-London only\n"
+                f"Max {MAX_BRIEFING_TOPICS} topics. Use `/briefing_unsubscribe` to stop."
+            )}
+        # Parse: first arg could be session or topic
+        valid_sessions = {"pre_london", "eod", "both"}
+        sessions = []
+        topics = []
+        for p in parts[1:]:
+            pl = p.lower()
+            if pl in valid_sessions:
+                if pl == "both":
+                    sessions = ["pre_london", "eod"]
+                else:
+                    sessions.append(pl)
+            else:
+                topics.append(p.upper())
+        if not sessions:
+            sessions = ["pre_london", "eod"]
+        # Only allow in groups
+        if not is_group:
+            return {"reply": "This command only works in groups. Add me to a group and run it there."}
+        group_jid = sender  # sender is the group JID in group chats
+        from services.trading import subscribe_group
+        res = subscribe_group(group_jid, user_phone, sessions, topics)
+        if res["ok"]:
+            sub = res["subscription"]
+            sess_str = ", ".join(sub["sessions"])
+            topic_str = ", ".join(sub["topics"]) if sub["topics"] else "all major pairs"
+            return {"reply": f"✅ Subscribed this group to {sess_str} briefing with: {topic_str}"}
+        return {"reply": f"Failed: {res.get('message', 'unknown error')}"}
+
+    if lower.startswith("/briefing_unsubscribe") or lower.startswith("/brief_unsub"):
+        if not is_group:
+            return {"reply": "Run this in the group you want to unsubscribe."}
+        group_jid = sender
+        from services.trading import unsubscribe_group
+        res = unsubscribe_group(group_jid)
+        return {"reply": res["message"]}
+
+    if lower.startswith("/briefing_list") or lower.startswith("/brief_list"):
+        from services.trading import list_subscriptions
+        subs = list_subscriptions()
+        if not subs:
+            return {"reply": "No active group subscriptions."}
+        lines = ["📋 **Active Briefing Subscriptions:**"]
+        for s in subs:
+            topics = ", ".join(s["topics"]) if s["topics"] else "all major"
+            lines.append(f"  {s['group_jid'].split('@')[0]} — {', '.join(s['sessions'])} — {topics}")
+        return {"reply": "\n".join(lines)}
 
     return None
 

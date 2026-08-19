@@ -1,8 +1,8 @@
 """
 services/trading_scheduler.py
 =============================
-Daily trading briefing scheduler. Runs at 07:30 UTC (pre-London) and 21:30 UTC (EOD).
-Posts to owner's WhatsApp via bridge API.
+Daily trading briefing scheduler. Runs at configurable times (EAT).
+Posts to subscribed groups + owner DM.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any
 
 from core.config import cfg, log, TZ
 from core.eventlog import event_log
-from services.trading import generate_daily_briefing, post_briefing_to_owner
+from services.trading import generate_daily_briefing, post_briefing_to_owner, post_briefing_to_groups
 
 
 class TradingBriefingScheduler:
@@ -101,21 +101,25 @@ class TradingBriefingScheduler:
         return next_run
 
     def _execute_briefing(self, session: str) -> None:
-        """Execute the briefing and post to owner."""
+        """Execute the briefing and post to owner + subscribed groups."""
         try:
             log.info(f"[TradingScheduler] Running {session} briefing")
 
             # Import bridge_api here to avoid circular imports
             import services.bridge_api as bridge_api
 
-            success = post_briefing_to_owner(bridge_api, session)
+            # Post to owner (legacy)
+            owner_success = post_briefing_to_owner(bridge_api, session)
 
-            if success:
+            # Post to subscribed groups (new)
+            group_count = post_briefing_to_groups(bridge_api, session)
+
+            if owner_success or group_count > 0:
                 event_log.append("trading", "daily_briefing_sent",
-                                 summary=f"Daily {session} briefing posted to owner",
-                                 payload={"session": session})
+                                 summary=f"Daily {session} briefing posted (owner: {owner_success}, groups: {group_count})",
+                                 payload={"session": session, "groups_posted": group_count})
             else:
-                log.warning(f"[TradingScheduler] Failed to post {session} briefing")
+                log.warning(f"[TradingScheduler] Failed to post {session} briefing anywhere")
 
         except Exception as exc:
             log.error(f"[TradingScheduler] Briefing execution failed: {exc}")
@@ -124,7 +128,9 @@ class TradingBriefingScheduler:
         """Manually trigger a briefing (for testing or /brief command)."""
         try:
             import services.bridge_api as bridge_api
-            return post_briefing_to_owner(bridge_api, session)
+            owner_ok = post_briefing_to_owner(bridge_api, session)
+            group_count = post_briefing_to_groups(bridge_api, session)
+            return owner_ok or group_count > 0
         except Exception as exc:
             log.error(f"[TradingScheduler] Manual trigger failed: {exc}")
             return False
