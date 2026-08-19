@@ -16,7 +16,18 @@ REALTIME_KEYWORDS = {
     'who is', 'what is', 'where is', 'when did', 'how to', 'why did',
     'define', 'meaning of', 'population', 'capital', 'location',
     'info on', 'about the', 'fees', 'specs', 'cost', 'date',
-    'when is', 'release', 'how much', 'details', 'structure'
+    'when is', 'release', 'how much', 'details', 'structure',
+    # Trading keywords (additive)
+    'btc', 'eth', 'sol', 'bnb', 'xrp', 'ada', 'doge', 'avax',
+    'eurusd', 'gbpusd', 'usdjpy', 'gold', 'oil', 'silver',
+    'spx', 'sp500', 'ndx', 'nasdaq', 'dji', 'dxy', 'vix',
+    'chart', 'analyze', 'analysis', 'technical', 'ta', 'support',
+    'resistance', 'trend', 'rsi', 'macd', 'ema', 'bollinger',
+    'breakout', 'pullback', 'reversal', 'divergence', 'volume',
+    'long', 'short', 'buy', 'sell', 'bullish', 'bearish',
+    'candle', 'wick', 'engulfing', 'hammer', 'doji',
+    'liquidity', 'orderflow', 'funding', 'open interest',
+    'what\'s', 'whats', 'how is', 'what is', 'where is',
 }
 
 def needs_realtime_heuristic(query):

@@ -191,6 +191,28 @@ class ProfileManager:
 
         return "\n[USER PROFILE]\n" + "\n".join(parts) + "\n[/USER PROFILE]\n"
 
+    # ---- Preferences helpers ----
+    def set_preference(self, user_id: str, key: str, value):
+        """Set a single preference key for a user and persist."""
+        profile = self.get_profile(user_id)
+        prefs = profile.get("preferences") or {}
+        prefs[str(key)] = value
+        profile["preferences"] = prefs
+        self.save()
+
+    def get_preferences(self, user_id: str) -> dict:
+        profile = self.get_profile(user_id)
+        return profile.get("preferences", {}) or {}
+
+    def merge_preferences(self, user_id: str, updates: dict) -> dict:
+        profile = self.get_profile(user_id)
+        prefs = profile.get("preferences") or {}
+        for k, v in (updates or {}).items():
+            prefs[str(k)] = v
+        profile["preferences"] = prefs
+        self.save()
+        return prefs
+
     def get_all_known_names(self) -> dict[str, str]:
         """Return a dict of {phone: name} for all contacts with known names."""
         return {

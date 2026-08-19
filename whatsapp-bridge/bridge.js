@@ -44,6 +44,18 @@ let receiveCount = 0;
 let lastErrorAt = null;
 let lastErrorMsg = null;
 const recentEvents = [];                 // ring buffer, max 30
+const lastBotReplyByJid = new Map();
+const deletedMessageCache = new Map();
+// (jid:originalId) -> ts — dedupes edits that arrive via BOTH messages.update
+// AND messages.upsert (protocolMessage.editedMessage) paths.
+const lastEditForwarded = new Map();
+
+function clearStaleEditCache() {
+    const now = Date.now();
+    for (const [key, ts] of Array.from(lastEditForwarded.entries())) {
+        if (now - ts > 10000) lastEditForwarded.delete(key);
+    }
+}
 
 function recordEvent(kind, summary) {
     lastActivityAt = Date.now();
@@ -51,18 +63,32 @@ function recordEvent(kind, summary) {
     if (recentEvents.length > 30) recentEvents.shift();
 }
 
+function markDeletedMessage(jid, messageId) {
+    if (!jid || !messageId) return;
+    deletedMessageCache.set(jid, { id: messageId, ts: Date.now() });
+    lastBotReplyByJid.delete(jid);
+}
+
+function clearStaleDeleteCache() {
+    const now = Date.now();
+    for (const [jid, info] of Array.from(deletedMessageCache.entries())) {
+        if (now - info.ts > 30000) deletedMessageCache.delete(jid);
+    }
+}
+
 async function instrumentedSend(jid, content, options) {
     try {
-        const res = await sock.sendMessage(jid, content, options);
+        const targetJid = outboundJid(jid) || jid;
+        const res = await sock.sendMessage(targetJid, content, options);
         sendCount++;
         lastSendAt = Date.now();
         const kind = typeof content === 'object' ? Object.keys(content)[0] : 'text';
-        recordEvent('send', `${kind} -> ${jid.split('@')[0]}`);
+        recordEvent('send', `${kind} -> ${targetJid.split('@')[0]}`);
         return res;
     } catch (e) {
         lastErrorAt = Date.now();
         lastErrorMsg = e && e.message;
-        recordEvent('send_fail', `${e && e.message} -> ${jid.split('@')[0]}`);
+        recordEvent('send_fail', `${e && e.message} -> ${String(jid || '').split('@')[0]}`);
         throw e;
     }
 }
@@ -73,7 +99,7 @@ const EPROTO_THRESHOLD = 3;
 const https = require('https');
 
 // Helper: defensively normalize JIDs and extract user portion when domains
-// like @lid appear. Returns a safe JID string (e.g. '250203957407887@s.whatsapp.net')
+// like @lid appear. Preserves valid WhatsApp JID domains (s.whatsapp.net, lid, g.us, etc.)
 function normalizeJid(sender) {
     if (!sender || typeof sender !== 'string') return null;
     try {
@@ -83,12 +109,18 @@ function normalizeJid(sender) {
         const user = parts[0] || '';
         const domain = parts[1] || '';
         if (!user) return null;
-        // If domain looks like a WhatsApp domain, keep it; otherwise map to s.whatsapp.net
-        const safeDomain = domain && domain.includes('whatsapp') ? domain : 's.whatsapp.net';
+        
+        // Known valid WhatsApp domains that must be preserved as-is
+        const validDomains = new Set(['s.whatsapp.net', 'g.us', 'lid', 'broadcast', 'newsletter', 'c.us', 'hosted']);
+        const safeDomain = (domain && (validDomains.has(domain) || domain.includes('whatsapp'))) ? domain : 's.whatsapp.net';
         return `${user}@${safeDomain}`;
     } catch (e) {
         return null;
     }
+}
+
+function outboundJid(jid) {
+    return normalizeJid(jid) || jid || null;
 }
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
@@ -105,6 +137,7 @@ async function startBot() {
         printQRInTerminal: false,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
+        mediaUploadTimeoutMs: 300000,
         keepAliveIntervalMs: 10000,
         getMessage: async (key) => {
             return { conversation: 'Hello' };
@@ -179,43 +212,138 @@ async function startBot() {
         }
     });
 
-    // ── Incoming message EDITS ───────────────────────────────────────────────
-    // The `messages.update` event is shared with read-receipts, reactions,
-    // REVOKE, group deletions, and the local "I just sent" case. The single
-    // check on `update.message?.editedMessage` is enough to filter to edits.
+    // ── Incoming message EDITS / REVOKES ─────────────────────────────────────
+    // Baileys can surface edits in different shapes depending on LID/session
+    // state, so check both `editedMessage` and the direct message payload.
+    // REVOKE events (user deleted their message) also come through here with
+    // `messageStubType: 1` and no new text — handle those as deletes too.
     sock.ev.on('messages.update', async (updates) => {
         for (const u of updates || []) {
-            if (u?.key?.fromMe) continue;
-            const edit = u?.update?.message?.editedMessage;
-            if (!edit) continue;
-            const inner = edit.message || {};
+            console.log(`[UPD] ${JSON.stringify(u).slice(0, 220)}`);
+            // Track delivery status of OUR OWN sent messages (video/audio/text):
+            // PENDING → SENT → DELIVERED → READ. If a sent video stays PENDING
+            // forever, the recipient's device never received it.
+            if (u?.key?.fromMe) {
+                const statusMap = { 0: 'PENDING', 1: 'SENT', 2: 'DELIVERED', 3: 'READ', 4: 'PLAYED' };
+                const st = u?.update?.status ?? u?.update?.message?.status;
+                console.log(`[FROM-ME] id=${(u?.key?.id || '').slice(0, 14)} jid=${(u?.key?.remoteJid || '').split('@')[0]} status=${statusMap[st] ?? st} raw=${JSON.stringify(u).slice(0, 160)}`);
+                continue;
+            }
+            const rawMsg = u?.update?.message || u?.update || {};
+            const updateKey = u?.update?.key || u?.key || {};
+            const jid = updateKey?.remoteJid || u?.key?.remoteJid || '';
+            // NOTE: Baileys emits u.key.id = the ORIGINAL (edited/deleted) message id,
+            // while u.update.key.id is the protocol-notification wrapper id. Always
+            // prefer the outer u.key.id so the bot matches the correct session turn.
+            const messageId = u?.key?.id || updateKey?.id || '';
+            const participant = updateKey?.participant || u?.key?.participant || jid;
+            const stubType = u?.update?.messageStubType;
+
+            // ── REVOKE (deletion) path ──────────────────────────────────────────
+            // When a user deletes/revokes their message, Baileys surfaces a stub
+            // event with `messageStubType: 1` and no new payload. Forward it to
+            // the bot so it can clean up its session + delete its own reply.
+            if (stubType === 1) {
+                console.log(`[REVOKE] jid=${jid.split('@')[0]} from=${participant.split('@')[0]} id=${messageId}`);
+                recordEvent('revoke', `${participant.split('@')[0]} deleted ${messageId.slice(0, 8)}`);
+                if (!jid || !messageId) continue;
+                markDeletedMessage(jid, messageId);
+                try {
+                    await axios.post(AI_SERVER, {
+                        message: '',
+                        deleted: true,
+                        message_id: messageId,
+                        sender: participant,
+                        user_phone: participant.split(':')[0].split('@')[0],
+                        group_name: jid.endsWith('@g.us') ? jid : null,
+                    }, { timeout: 60000 }).catch(err => {
+                        console.error('[REVOKE] forward failed:', err.message);
+                    });
+                } catch (err) {
+                    console.error('[REVOKE] unexpected:', err.message);
+                }
+                continue;
+            }
+
+            // ── EDIT path ───────────────────────────────────────────────────────
+            const edit = rawMsg?.editedMessage || rawMsg?.message || null;
+            const inner = edit?.message || edit || {};
             const newText = inner.conversation
                           || inner.extendedTextMessage?.text
                           || inner.imageMessage?.caption
                           || inner.videoMessage?.caption
                           || inner.documentMessage?.caption
+                          || rawMsg?.conversation
+                          || rawMsg?.extendedTextMessage?.text
                           || '';
-            const jid = u.key?.remoteJid || '';
-            const participant = u.key?.participant || '';
-            const messageId = u.key?.id || '';
-            if (!jid || !messageId) continue;
+            if (!jid || !messageId || !newText.trim()) {
+                console.log(`[EDIT] skipping - jid:${!!jid} messageId:${!!messageId} newText:${!!newText.trim()} stubType:${stubType}`);
+                continue;
+            }
+            clearStaleEditCache();
+            const dedupeKey = `${jid}:${messageId}`;
+            const lastEditTs = lastEditForwarded.get(dedupeKey);
+            if (lastEditTs && Date.now() - lastEditTs < 10000) {
+                console.log(`[EDIT] dedupe skip (already forwarded) id=${messageId}`);
+                continue;
+            }
+            lastEditForwarded.set(dedupeKey, Date.now());
             console.log(`[EDIT] jid=${jid.split('@')[0]} from=${participant.split('@')[0]} id=${messageId} new_text=${JSON.stringify(newText)}`);
             recordEvent('edit', `${participant.split('@')[0]} -> ${newText.slice(0, 40)}`);
-            // Forward to Flask /reply with edited=true so it can swap the
-            // last user turn in the session before re-running the LLM.
             try {
-                await axios.post(AI_SERVER, {
-                    message: newText || '[edited empty]',
+                const payload = {
+                    message: newText,
                     edited: true,
                     message_id: messageId,
-                    sender: participant || jid,
-                    user_phone: (participant || jid).split(':')[0].split('@')[0],
+                    sender: participant,
+                    user_phone: participant.split(':')[0].split('@')[0],
                     group_name: jid.endsWith('@g.us') ? jid : null,
-                }, { timeout: 5 }).catch(err => {
+                };
+                console.log('[EDIT] forwarding payload:', JSON.stringify(payload));
+                const res = await axios.post(AI_SERVER, payload, { timeout: 60000 }).catch(err => {
                     console.error('[EDIT] forward failed:', err.message);
+                    return null;
                 });
+                if (res?.data) {
+                    await sendAIResponse(null, jid, res, null, participant)
+                        .catch(e => console.error('[EDIT] response handling failed:', e.message));
+                }
             } catch (err) {
                 console.error('[EDIT] unexpected:', err.message);
+            }
+        }
+    });
+
+    // ── Incoming message DELETES / REVOKES ───────────────────────────────────
+    // If a user deletes their own message, we make the bot treat it as if the
+    // conversation was cancelled and remove the most recent bot reply for that
+    // sender when one exists. The bot handles the actual message deletion via
+    // bridge_delete to avoid double-delete race conditions.
+    sock.ev.on('messages.delete', async (deletes) => {
+        for (const d of deletes || []) {
+            if (!d?.keys?.length) continue;
+            for (const key of d.keys) {
+                const jid = key?.remoteJid || '';
+                const messageId = key?.id || '';
+                const sender = key?.participant || jid || '';
+                console.log(`[DELETE] raw delete key:`, JSON.stringify(key, null, 2).slice(0, 500));
+                if (!jid || !messageId) continue;
+                if (key?.fromMe) continue;
+                markDeletedMessage(jid, messageId);
+                try {
+                    await axios.post(AI_SERVER, {
+                        message: '',
+                        deleted: true,
+                        message_id: messageId,
+                        sender: sender,
+                        user_phone: sender.split(':')[0].split('@')[0],
+                        group_name: jid.endsWith('@g.us') ? jid : null,
+                    }, { timeout: 60000 }).catch(err => {
+                        console.error('[DELETE] forward failed:', err.message);
+                    });
+                } catch (err) {
+                    console.error('[DELETE] unexpected:', err.message);
+                }
             }
         }
     });
@@ -223,6 +351,7 @@ async function startBot() {
 
 // ─── Message Handler ─────────────────────────────────────────────────────────
 async function handleMessage(msg) {
+    console.log('[BRIDGE] handleMessage called:', msg.key?.remoteJid, msg.message ? Object.keys(msg.message) : 'no message');
     if (!msg.message || msg.key.fromMe) return;
 
     const pushName = msg.pushName || '';
@@ -297,8 +426,10 @@ async function handleMessage(msg) {
         return;
     }
 
-    // Mark message as read (blue ticks)
-    await sock.readMessages([msg.key]).catch(e => console.error('[BRIDGE] readMessages error:', e.message));
+    // Mark message as read (blue ticks) — skip for simulated test messages
+    if (!msg._simulated) {
+        await sock.readMessages([msg.key]).catch(e => console.error('[BRIDGE] readMessages error:', e.message));
+    }
 
     // Bot identity
     const botJid = sock.user?.id || '';
@@ -322,18 +453,180 @@ async function handleMessage(msg) {
               || m.documentMessage?.contextInfo
               || {};
 
-    let text = m.conversation
-              || extM?.text
-              || m.imageMessage?.caption
-              || m.videoMessage?.caption
-              || '';
+let text = m.conversation
+          || extM?.text
+          || m.imageMessage?.caption
+          || m.videoMessage?.caption
+          || '';
 
-    // Media type flags
+    // Media type flags (moved up for early filter)
     const hasImage   = !!m.imageMessage;
     const hasVideo   = !!m.videoMessage;
     const hasAudio   = !!m.audioMessage;
     const hasSticker = !!m.stickerMessage;
     const hasDocument = !!m.documentMessage;
+
+    // ── Early filter: ignore system messages with no real content ─────────────
+    // Catch protocol messages, stub messages, and other system noise before
+    // they reach command handlers or the AI.
+    const msgTypeKeys = Object.keys(m || {});
+    const hasRealContent = text.trim() || hasImage || hasVideo || hasAudio || hasSticker || hasDocument;
+    if (!hasRealContent) {
+        console.log(`[DEBUG] Ignoring system/empty message from ${userPhone}: typeKeys=${msgTypeKeys.join(',')}`);
+        return;
+    }
+
+    // ── Suppress WhatsApp "X deleted this message" notices ───────────────────
+    // When a message gets revoked, WhatsApp posts a notice like
+    // "[Crimson] @171292623908980 deleted:\n\n<original text>" into the chat.
+    // It arrives as a plain inbound message; feeding it to the LLM makes the
+    // bot "answer" a deletion (garbage searches, wrong downloads). Drop it.
+    if (/@\S+\s+deleted:?\s*\n/i.test(text) || /^\[?[A-Za-z][\w ]{0,30}\]?\s+@\S+\s+deleted/i.test(text)) {
+        console.log(`[DEBUG] ignoring deletion notice from ${userPhone} (${text.slice(0, 40)}…)`);
+        return;
+    }
+
+    // ── Incoming message EDITS (delivered as `message.editedMessage`) ────────
+    // Modern WhatsApp clients deliver edits as a top-level `editedMessage`
+    // field on the Message (no protocolMessage wrapper, no messages.update
+    // event — Baileys' normalizeMessageContent unwraps it, so the only trace
+    // of an edit here is this upsert). Extract the new content and forward it
+    // to the bot. The node's key.id IS the original message id.
+    try {
+        if (m.editedMessage) {
+            // Handle FutureProofMessage wrapper: may contain a Message object or a fallback string
+            const editedWrapper = m.editedMessage;
+            const edited = editedWrapper.message || editedWrapper;
+            let editText;
+            if (typeof edited === 'string') {
+                // Fallback case: edited is the raw text string
+                editText = edited;
+            } else if (edited && typeof edited === 'object') {
+                // Normal case: extract text from message object
+                editText = edited.conversation
+                          || edited.extendedTextMessage?.text
+                          || edited.imageMessage?.caption
+                          || edited.videoMessage?.caption
+                          || edited.documentMessage?.caption
+                          || '';
+            } else {
+                // Unexpected type: treat as empty
+                editText = '';
+            }
+            const origId = msg.key.id || '';
+            if (editText.trim() && origId) {
+                clearStaleEditCache();
+                const dedupeKey = `${from}:${origId}`;
+                const lastEditTs = lastEditForwarded.get(dedupeKey);
+                if (lastEditTs && Date.now() - lastEditTs < 10000) {
+                    console.log(`[EDIT-DIRECT] dedupe skip id=${origId}`);
+                } else {
+                    lastEditForwarded.set(dedupeKey, Date.now());
+                    const editSender = msg.key.participant || from;
+                    // Safe logging for from and editSender
+                    const fromUser = from && typeof from === 'string' ? from.split('@')[0] : '(unknown)';
+                    const editSenderUser = editSender && typeof editSender === 'string' ? editSender.split('@')[0] : '(unknown)';
+                    console.log(`[EDIT-DIRECT] jid=${fromUser} from=${editSenderUser} id=${origId} new_text=${JSON.stringify(editText)}`);
+                    try {
+                        const res = await axios.post(AI_SERVER, {
+                            message: editText,
+                            edited: true,
+                            message_id: origId,
+                            sender: editSender,
+                            user_phone: editSender.split(':')[0].split('@')[0],
+                            group_name: from.endsWith('@g.us') ? from : null,
+                        }, { timeout: 60000 }).catch(err => {
+                            console.error('[EDIT-DIRECT] forward failed:', err.message);
+                            return null;
+                        });
+                        // The bot replies with {reply, edit_mode, replace_message_id} —
+                        // process it so the final edit lands on WhatsApp.
+                        if (res?.data) {
+                            await sendAIResponse(null, from, res, null, editSender)
+                                .catch(e => console.error('[EDIT-DIRECT] response handling failed:', e.message));
+                        }
+                    } catch (err) {
+                        console.error('[EDIT-DIRECT] unexpected:', err.message);
+                    }
+                }
+            }
+            return;
+        }
+    } catch (err) {
+        console.error('[EDIT-DIRECT] top-level error:', err.message);
+        return;
+    }
+
+    // ── Incoming message EDITS (delivered via protocolMessage upsert) ────────
+    // Some WhatsApp flows deliver edits as `protocolMessage.editedMessage`
+    // inside a messages.upsert rather than a messages.update. Forward those to
+    // the bot too (deduped against the messages.update path).
+    try {
+        const protoMsg = m.protocolMessage;
+        if (protoMsg?.editedMessage) {
+            const edited = protoMsg.editedMessage;
+            const editText = edited.conversation
+                          || edited.extendedTextMessage?.text
+                          || edited.imageMessage?.caption
+                          || edited.videoMessage?.caption
+                          || edited.documentMessage?.caption
+                          || '';
+            const origKey = protoMsg.key || msg.key || {};
+            const origId = origKey.id || '';
+            const origJid = origKey.remoteJid || from;
+            if (editText.trim() && origId) {
+                clearStaleEditCache();
+                const dedupeKey = `${origJid}:${origId}`;
+                const lastEditTs = lastEditForwarded.get(dedupeKey);
+                if (lastEditTs && Date.now() - lastEditTs < 10000) {
+                    console.log(`[EDIT-UPSERT] dedupe skip id=${origId}`);
+                } else {
+                    lastEditForwarded.set(dedupeKey, Date.now());
+                    const editSender = msg.key.participant || origJid;
+                    // Safe logging for origJid and editSender
+                    const origJidUser = origJid && typeof origJid === 'string' ? origJid.split('@')[0] : '(unknown)';
+                    const editSenderUser = editSender && typeof editSender === 'string' ? editSender.split('@')[0] : '(unknown)';
+                    console.log(`[EDIT-UPSERT] jid=${origJidUser} from=${editSenderUser} id=${origId} new_text=${JSON.stringify(editText)}`);
+                    try {
+                        const res = await axios.post(AI_SERVER, {
+                            message: editText,
+                            edited: true,
+                            message_id: origId,
+                            sender: editSender,
+                            user_phone: editSender.split(':')[0].split('@')[0],
+                            group_name: from.endsWith('@g.us') ? from : null,
+                        }, { timeout: 60000 }).catch(err => {
+                            console.error('[EDIT-UPSERT] forward failed:', err.message);
+                            return null;
+                        });
+                        if (res?.data) {
+                            await sendAIResponse(null, from, res, null, editSender)
+                                .catch(e => console.error('[EDIT-UPSERT] response handling failed:', e.message));
+                        }
+                    } catch (err) {
+                        console.error('[EDIT-UPSERT] unexpected:', err.message);
+                    }
+                }
+            }
+            return;
+        }
+    } catch (err) {
+        console.error('[EDIT-UPSERT] top-level error:', err.message);
+        return;
+    }
+
+    // Protocol messages (revokes, disappearing-message wrappers) arrive here as
+    // empty upserts, but they are already handled via `messages.update`. Skip
+    // them silently instead of logging noise.
+    if (m.protocolMessage) {
+        return;
+    }
+
+    // Ignore empty/unsupported payloads so the bot does not treat blank messages as media.
+    if (!text.trim() && !hasImage && !hasVideo && !hasAudio && !hasSticker && !hasDocument) {
+        console.log(`[DEBUG] Ignoring empty/unsupported message from ${userPhone} (no text, image, video, audio, sticker, or document)`);
+        return;
+    }
 
     // Quoted message helpers
     const quotedMsg    = ctx.quotedMessage   || null;
@@ -586,11 +879,18 @@ async function handleMessage(msg) {
         }
 
         if (!mediaBuf) {
-            await instrumentedSend(from, { text: 'Please send or reply to an image/video with /sticker' }, { quoted: msg });
-            return;
+            // No media attached — check if it's a text prompt for AI sticker generation
+            const prompt = text.replace(/^\/sticker\s*/i, '').trim();
+            if (prompt) {
+                // Forward to AI for sticker generation
+                console.log(`[Sticker] Text-only prompt, forwarding to AI: ${prompt}`);
+            } else {
+                await instrumentedSend(from, { text: 'Please send or reply to an image/video with /sticker, or provide a prompt like "/sticker happy cat"' }, { quoted: msg });
+                return;
+            }
+        } else {
+            await sock.sendPresenceUpdate('composing', from).catch(() => {});
         }
-
-        await sock.sendPresenceUpdate('composing', from).catch(() => {});
 
         if (mediaType === 'image') {
             const sharp = require('sharp');
@@ -614,12 +914,18 @@ async function handleMessage(msg) {
                 [orig, out].forEach(p => { try { fs.unlinkSync(p); } catch (_) {} });
             }
         }
+        // For text-only prompts, fall through to AI handler for sticker generation
+        if (!mediaBuf) {
+            return;
+        }
         return;
     }
 
     // ── Vision auto-attach ───────────────────────────────────────────────────
     let imageData = null;
-    if (hasImage || hasSticker) {
+    if (msg._simulatedImageB64) {
+        imageData = msg._simulatedImageB64;
+    } else if (hasImage || hasSticker) {
         const buf = await downloadMediaMessage(msg, 'buffer', {}).catch((e) => {
             console.log(`[MEDIA] Download failed: ${e.message}`);
             return null;
@@ -650,12 +956,14 @@ async function handleMessage(msg) {
             group_name:     isGroup ? from : null,
             bot_id:         botNum,
             bot_lid:        botLid
-        });
+        }, { timeout: 120000 });
+        
+        console.log('[BRIDGE] AI response status:', res.status, 'keys:', Object.keys(res.data || {}));
         
         clearInterval(typingInterval);
         await sendAIResponse(msg, from, res, quotedFake, quotedSender);
     } catch (e) {
-        console.error('[BRIDGE] AI error:', e.message);
+        console.error('[BRIDGE] AI error:', e.message, e.code || '', e.response?.status || '');
     }
 }
 
@@ -663,6 +971,14 @@ async function handleMessage(msg) {
 async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAuthor) {
     if (!response?.data) return;
     const data = response.data;
+    const sendJid = outboundJid(from) || from;
+    clearStaleDeleteCache();
+    const deletedInfo = deletedMessageCache.get(from);
+    if (deletedInfo && Date.now() - deletedInfo.ts < 30000) {
+        deletedMessageCache.delete(from);
+        console.log(`[DELETE] skipped bot response to ${from.split('@')[0]} after deletion event`);
+        return;
+    }
 
     // Collect message IDs for self-correction
     const sentMessageIds = [];
@@ -670,9 +986,11 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
 
     // Helper to wrap instrumentedSend and capture message_id
     const trackedSend = async (jid, content, options) => {
-        const res = await instrumentedSend(jid, content, options);
+        const targetJid = outboundJid(jid) || jid;
+        const res = await instrumentedSend(targetJid, content, options);
         if (res?.key?.id) {
             sentMessageIds.push(res.key.id);
+            lastBotReplyByJid.set(targetJid, res.key.id);
         }
         return res;
     };
@@ -682,9 +1000,9 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
         if (!filePath || !fs.existsSync(filePath)) return;
         try {
             const buf = fs.readFileSync(filePath);
-            if      (type === 'audio') await trackedSend(from, { audio: buf, mimetype: 'audio/ogg; codecs=opus', ptt: data.ptt || false });
-            else if (type === 'video') await trackedSend(from, { video: buf, mimetype: 'video/mp4', fileName: filename || 'video.mp4', caption: '🎬' });
-            else if (type === 'image') await trackedSend(from, { image: buf, caption: filename || '' });
+            if      (type === 'audio') await trackedSend(sendJid, { audio: buf, mimetype: 'audio/ogg; codecs=opus', ptt: data.ptt || false });
+            else if (type === 'video') await trackedSend(sendJid, { video: buf, mimetype: 'video/mp4', fileName: filename || 'video.mp4', caption: '🎬' });
+            else if (type === 'image') await trackedSend(sendJid, { image: buf, caption: filename || '' });
             fs.unlink(filePath, () => {});
         } catch (e) { console.error(`[${type}]`, e.message); }
     };
@@ -716,7 +1034,7 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
         try {
             const b64 = data.image_base64 || data.media_base64;
             const buf = Buffer.from(b64, 'base64');
-            await trackedSend(from, { image: buf, caption: data.filename || '' });
+            await trackedSend(sendJid, { image: buf, caption: data.filename || '' });
         } catch (e) {
             console.error('[Image send b64]', e.message);
         }
@@ -728,7 +1046,7 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
             try {
                 const buf = fs.existsSync(stk) ? fs.readFileSync(stk) : Buffer.from(stk, 'base64');
                 const quotedObj = (data.reply_to_quoted && quotedFake) ? quotedFake : originalMsg;
-                await trackedSend(from, { sticker: buf }, { quoted: quotedObj });
+                await trackedSend(sendJid, { sticker: buf }, { quoted: quotedObj });
             } catch (e) { console.error('[Sticker list send]', e.message); }
         }
     } else if (data.sticker) {
@@ -737,11 +1055,30 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
                 ? fs.readFileSync(data.sticker)
                 : Buffer.from(data.sticker, 'base64');
             const quotedObj = (data.reply_to_quoted && quotedFake) ? quotedFake : originalMsg;
-            await trackedSend(from, { sticker: buf }, { quoted: quotedObj });
+            await trackedSend(sendJid, { sticker: buf }, { quoted: quotedObj });
         } catch (e) { console.error('[Sticker send]', e.message); }
 
-    // Send text reply
-    } else if (data.reply) {
+    // Send text reply (or in-place edit of a previous bot message)
+    } else if (data.reply || (data.edit_mode && data.replace_message_id)) {
+        if (data.edit_mode && data.replace_message_id) {
+            const finalText = data.reply || '...';
+            sentText = finalText;
+            try {
+                // NOTE: `edit` must live INSIDE the content object, not options —
+                // Baileys checks `'edit' in content` to build the protocol message.
+                // Passing it in options silently sends a NEW message instead.
+                const res = await instrumentedSend(sendJid,
+                    { text: finalText, edit: { remoteJid: sendJid, id: data.replace_message_id, fromMe: true } }
+                );
+                if (res?.key?.id) {
+                    lastBotReplyByJid.set(sendJid, res.key.id);
+                }
+                console.log(`[DEBUG] Edited bot reply in place for ${sendJid.split('@')[0]} -> ${data.replace_message_id}`);
+                return;
+            } catch (e) {
+                console.error('[Reply Error]', e.message);
+            }
+        }
         sentText = data.reply;
         console.log(`[DEBUG] Attempting to send text reply: ${data.reply}`);
 
@@ -762,7 +1099,7 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
         }
 
         try {
-            await trackedSend(from,
+            await trackedSend(sendJid,
                 { text: data.reply, mentions: mentions.length ? mentions : undefined },
                 { quoted: data.reply_to_quoted && quotedFake ? quotedFake : originalMsg }
             );
@@ -776,7 +1113,7 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
     if (sentMessageIds.length > 0) {
         try {
             await axios.post('http://127.0.0.1:5000/sent_ids', {
-                jid: from,
+                jid: sendJid,
                 message_ids: sentMessageIds,
                 sent_text: sentText
             }, { timeout: 3000 });
@@ -792,12 +1129,14 @@ startBot();
 // ─── HTTP API for Progress Updates & Health ────────────────────────────────────
 const http = require('http');
 http.createServer((req, res) => {
+    req.setTimeout(300000);
+    res.setTimeout(300000);
     if (req.method === 'POST' && req.url === '/send_message') {
         let body = '';
         req.on('data', chunk => body += chunk.toString());
         req.on('end', async () => {
             try {
-                const { jid, text } = JSON.parse(body);
+                const { jid, text, path: mediaPath, media_type, filename } = JSON.parse(body);
                 if (!sock) {
                     res.writeHead(503, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
@@ -809,8 +1148,40 @@ http.createServer((req, res) => {
                 const target = normalizeJid(jid) || jid;
                 let sent_key = null;
                 try {
-                    const r = await instrumentedSend(target, { text });
-                    sent_key = r && r.key;
+                    if (mediaPath && fs.existsSync(mediaPath)) {
+                        const buf = fs.readFileSync(mediaPath);
+                        const mtype = (media_type || 'audio').toLowerCase();
+                        let content;
+                        if (mtype === 'video') content = { video: buf, mimetype: 'video/mp4', fileName: filename || 'video.mp4', caption: '🎬' };
+                        else if (mtype === 'image') content = { image: buf, caption: filename || '' };
+                        else if (mtype === 'document') content = { document: buf, mimetype: 'application/octet-stream', fileName: filename || 'file.bin', caption: text || '' };
+                        else {
+                            const fname = (filename || mediaPath || '').toLowerCase();
+                            let audioMime = 'audio/ogg; codecs=opus';
+                            if (fname.endsWith('.mp3')) audioMime = 'audio/mpeg';
+                            else if (fname.endsWith('.m4a')) audioMime = 'audio/mp4';
+                            content = { audio: buf, mimetype: audioMime, ptt: false };
+                        }
+                        // WhatsApp media CDN is intermittently unreachable; retry before giving up.
+                        for (let attempt = 1; attempt <= 3; attempt++) {
+                            try {
+                                const r = await instrumentedSend(target, content);
+                                sent_key = r && r.key;
+                                break;
+                            } catch (err) {
+                                console.error(`[API] sendMessage media attempt ${attempt}/3 failed:`, err.message);
+                                if (attempt < 3) {
+                                    await new Promise(res => setTimeout(res, 2000 * attempt));
+                                } else {
+                                    throw err;
+                                }
+                            }
+                        }
+                        fs.unlink(mediaPath, () => {});
+                    } else {
+                        const r = await instrumentedSend(target, { text });
+                        sent_key = r && r.key;
+                    }
                 } catch (err) {
                     console.error('[API] sendMessage error:', err.message);
                     res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -834,6 +1205,67 @@ http.createServer((req, res) => {
         return;
     }
 
+    // ── TEST HOOK: /simulate — inject a fabricated user message through the
+    // real event handlers (messages.upsert / messages.update) exactly like
+    // WhatsApp traffic. Replies go through the normal send path.
+    //   {jid, type: 'message'|'edit'|'delete', text, id?, edit_id?, image_base64?, push_name?}
+    if (req.method === 'POST' && req.url === '/simulate') {
+        let body = '';
+        req.on('data', chunk => body += chunk.toString());
+        req.on('end', async () => {
+            try {
+                const p = JSON.parse(body);
+                if (!sock) {
+                    res.writeHead(503, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
+                }
+                const jid = p.jid || '250203957407887@lid';
+                const msgId = p.id || (Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase());
+                const pushName = p.push_name || 'crimson';
+                const baseKey = { remoteJid: jid, fromMe: false, id: msgId, participant: '', addressingMode: 'lid' };
+                if (p.type === 'edit') {
+                    const fakeMsg = {
+                        key: baseKey,
+                        message: { editedMessage: { message: { conversation: p.text || '' } } },
+                        pushName,
+                        messageTimestamp: Math.floor(Date.now() / 1000),
+                        _simulated: true,
+                    };
+                    sock.ev.emit('messages.upsert', { messages: [fakeMsg], type: 'notify' });
+                    console.log(`[SIMULATE] edit injected id=${msgId} text=${JSON.stringify(p.text)}`);
+                } else if (p.type === 'delete') {
+                    const delKey = { ...baseKey, id: p.edit_id || msgId };
+                    sock.ev.emit('messages.update', [
+                        { key: delKey, update: { message: null, messageStubType: 1, key: delKey } }
+                    ]);
+                    console.log(`[SIMULATE] delete injected id=${delKey.id}`);
+                } else {
+                    const fakeMsg = {
+                        key: baseKey,
+                        pushName,
+                        messageTimestamp: Math.floor(Date.now() / 1000),
+                        _simulated: true,
+                        _simulatedImageB64: p.image_base64 || null,
+                    };
+                    if (p.image_base64) {
+                        fakeMsg.message = { imageMessage: { mimetype: 'image/jpeg', caption: p.text || '' } };
+                    } else {
+                        fakeMsg.message = { conversation: p.text || '' };
+                    }
+                    sock.ev.emit('messages.upsert', { messages: [fakeMsg], type: 'notify' });
+                    console.log(`[SIMULATE] message injected id=${msgId} text=${JSON.stringify(p.text)} image=${!!p.image_base64}`);
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: true, injected_id: p.type === 'delete' ? (p.edit_id || msgId) : msgId }));
+            } catch (e) {
+                console.error('[API] /simulate error:', e.message);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: e.message }));
+            }
+        });
+        return;
+    }
+
     if (req.method === 'POST' && req.url === '/edit_message') {
         let body = '';
         req.on('data', chunk => body += chunk.toString());
@@ -848,7 +1280,11 @@ http.createServer((req, res) => {
                     res.writeHead(400, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify({ ok: false, error: 'missing_fields' }));
                 }
-                const target = normalizeJid(jid) || jid;
+                // Use the raw jid as-is: the message was sent to this exact jid
+                // (e.g. @lid), and edit keys must match the original send key.
+                // normalizeJid() would remap @lid → @s.whatsapp.net and the edit
+                // would silently fail.
+                const target = jid;
                 try {
                     await instrumentedSend(target, {
                         text: new_text,
@@ -884,7 +1320,11 @@ http.createServer((req, res) => {
                     res.writeHead(400, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify({ ok: false, error: 'missing_fields' }));
                 }
-                const target = normalizeJid(jid) || jid;
+                // Use the raw jid as-is: the message was sent to this exact jid
+                // (e.g. @lid), and delete keys must match the original send key.
+                // normalizeJid() would remap @lid → @s.whatsapp.net and the
+                // delete would silently fail.
+                const target = jid;
                 try {
                     await instrumentedSend(target, {
                         delete: { remoteJid: target, id: message_id, fromMe: true },

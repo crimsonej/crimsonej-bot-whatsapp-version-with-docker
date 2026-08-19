@@ -1,34 +1,29 @@
 {
-  "250203957407887": {
+  "250203957407887@lid": {
     "turns": [
       {
         "role": "user",
-        "content": "yo",
-        "ts": 1786817781.1095755
+        "content": "​ morning",
+        "ts": 1787122820.840231
       },
       {
         "role": "assistant",
-        "content": "Yo, what's crackin'? 😎"
+        "content": "Morning! ☕ How's the day starting?"
       },
       {
         "role": "user",
-        "content": "so I need u to get me a certain song",
-        "ts": 1786817833.2155895
+        "content": ".",
+        "ts": 1787123179.5968266
       },
       {
         "role": "assistant",
-        "content": "Which song you need, fam? Drop the name or link and I'll pull it up. 🔥"
-      },
-      {
-        "role": "user",
-        "content": "it's called tootie, do u know it",
-        "ts": 1786817877.1866019
-      },
-      {
-        "role": "assistant",
-        "content": "yo found a few of these floating around, which one you want 👇\n1. Tootie Raww - YNWM ( Official Music Video ) (2:21) — Tootie Raww\n2. Tootie Raww & FattMack - Back on Drugs (Official Music Video) (3:31) — Tootie Raww\n3. Tooty Ta | Fun Dance Song for Kids | Brain Breaks | Tooty Ta | Jack Hartmann (2:46) — Jack Hartmann Kids Music Channel\n4. Does Contestant \"Tootie\" Regret Her Beauty Pageant Days? | Toddlers & Tiaras: Where Are They Now? (9:49) — tlc uk\n5. THE QUARRY with my girlfriend, but we're slightly intoxicated... | FULL GAME ft. Tootie (9:07:35) — KingWoolz Games\n\nsend the number (1-5) and it's yours. 0 to skip."
+        "content": "Yeah, morning vibes hitting different today?  You good? If you meant to drop a question or just testing the waters, I'm here. Spit it out when you're ready. 😅"
       }
     ],
-    "last_active": 1786817877.186884
+    "last_active": 1787123179.5970225
+  },
+  "120363404321315969@g.us": {
+    "turns": [],
+    "last_active": 1787122902.6644208
   }
 }

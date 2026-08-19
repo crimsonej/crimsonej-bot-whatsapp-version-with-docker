@@ -1,0 +1,19 @@
+{
+  "256789": [
+    {
+      "id": 1,
+      "timestamp": "2026-08-19T17:03:24.213067+03:00",
+      "symbol": "BTC",
+      "side": "long",
+      "entry": 50000.0,
+      "sl": 49000.0,
+      "tp": 52000.0,
+      "size": 0.1,
+      "result": "win",
+      "pnl": 1000.0,
+      "r_multiple": 2.0,
+      "notes": "test",
+      "setup": "bull_flag"
+    }
+  ]
+}

@@ -78,7 +78,20 @@ def truncate_messages(messages: list[dict], max_tokens: int = MAX_HISTORY_MSG_TO
     return truncated
 
 def _strip_think(text: str) -> str:
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    """Strip <think>...</think> blocks from LLM output.
+    
+    Handles:
+    - Complete blocks:  <think>...</think>
+    - Unclosed blocks:  <think>...EOF  (model timed out mid-generation)
+    - Nested/multiple: multiple complete or partial blocks
+    """
+    if "<think>" not in text:
+        return text
+    # First pass: strip complete blocks (non-greedy to handle multiple)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # Second pass: strip any leftover unclosed opening tag and everything after it
+    text = re.sub(r"<think>.*", "", text, flags=re.DOTALL)
+    return text.strip()
 
 def _call_nvidia(messages: list, tools: list | None = None, model: str = NVIDIA_BRAIN, max_tokens: int = 1024, timeout: float = 20.0) -> object:
     if not nvidia_client:
@@ -117,13 +130,22 @@ def call_llm(messages: list[dict[str, str]], tools: list | None = None, tool_exe
                 log.info("[Brain] Tools: %s", [t.function.name for t in tool_calls])
                 messages.append(brain_msg)
                 tool_results = tool_executor_fn(tool_calls, messages, user_id, sender_jid)
-                # Final synthesis via 8B scout
+                if isinstance(tool_results, dict):
+                    reply_value = tool_results.get("reply")
+                    if isinstance(reply_value, str):
+                        tool_results["reply"] = _sanitize_tool_reply(reply_value)
+                # If tool executor already prepared a complete reply (menu, search results, etc.),
+                # use it directly without calling scout for synthesis.
+                if tool_results.get("reply"):
+                    return tool_results
+                # Otherwise, do final synthesis via 8B scout
                 final = _call_nvidia(messages, tools=None, model=NVIDIA_SCOUT, max_tokens=1024, timeout=15.0)
                 content = final.choices[0].message.content or ""
                 return {"reply": _strip_think(content), **tool_results}
 
             content = brain_msg.content or ""
-            return {"reply": _strip_think(content)}
+            cleaned = _sanitize_tool_reply(content)
+            return {"reply": _strip_think(cleaned)}
         except Exception as exc:
             log.warning("[Brain] NVIDIA 70B failed: %s – trying 8B...", exc)
 
@@ -138,11 +160,18 @@ def call_llm(messages: list[dict[str, str]], tools: list | None = None, tool_exe
                 log.info("[Fallback] Tools: %s", [t.function.name for t in tool_calls])
                 messages.append(scout_msg)
                 tool_results = tool_executor_fn(tool_calls, messages, user_id, sender_jid)
-                # Final synthesis via 8B scout (recursive, relies on context)
-                return {"reply": tool_results.get("reply", ""), **tool_results}
+                if isinstance(tool_results, dict):
+                    reply_value = tool_results.get("reply")
+                    if isinstance(reply_value, str):
+                        tool_results["reply"] = _sanitize_tool_reply(reply_value)
+                # If tool executor prepared a complete reply, return it immediately
+                if tool_results.get("reply"):
+                    return tool_results
+                return {"reply": "", **tool_results}
 
             content = scout_msg.content or ""
-            return {"reply": _strip_think(content)}
+            cleaned = _sanitize_tool_reply(content)
+            return {"reply": _strip_think(cleaned)}
         except Exception as exc:
             log.warning("[Fallback] NVIDIA 8B failed: %s", exc)
 
@@ -163,4 +192,20 @@ def scout_quick_call(messages: list[dict[str, str]], tools: list | None = None, 
     except Exception as e:
         log.info("[Scout Quick] quick scout call failed: %s", e)
         return None
+
+def _sanitize_tool_reply(reply: object) -> str:
+    """Reject raw tool payloads and fake placeholder links before they reach the user."""
+    if reply is None:
+        return ""
+    text = str(reply).strip()
+    if not text:
+        return ""
+    lower = text.lower()
+    if re.match(r'^\s*\{.*?"name"\s*:\s*".*?".*?"parameters"\s*:\s*\{', text, re.DOTALL):
+        return "I’m not meant to send raw tool data. Tell me the exact track/version and I’ll sort it cleanly."
+    if "example.com" in lower or "audio-download-link" in lower or "video-download-link" in lower:
+        return "I sent the wrong thing there. Tell me the exact track/version and I’ll do it properly."
+    if "download_video function" in lower or "download_audio function" in lower:
+        return "I’m not supposed to expose the tool call. Tell me the exact track/version and I’ll sort it cleanly."
+    return text
 

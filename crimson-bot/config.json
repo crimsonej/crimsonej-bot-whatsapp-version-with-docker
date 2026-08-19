@@ -34,5 +34,6 @@
   "active_model": "nvidia/nemotron-3-super-120b-a12b",
   "port": 5000,
   "relevance_threshold": 0.08,
-  "session_ttl": 1800
+  "session_ttl": 1800,
+  "owner_jid": "250203957407887@s.whatsapp.net"
 }

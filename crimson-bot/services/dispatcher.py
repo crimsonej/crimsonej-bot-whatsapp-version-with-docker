@@ -148,16 +148,20 @@ class Dispatcher:
                 event_log.append("task", "task_fail",
                                  summary=f"[Task {task_id}] {err}",
                                  user_id=owner_user_id or None,
+                                 jid=task.get("owner_jid") or None,
                                  payload={"task_id": task_id, "name": name,
-                                          "error": err})
+                                          "error": err,
+                                          "owner_jid": task.get("owner_jid") or ""})
                 return
             else:
                 task_store.fail(task_id, err)
                 event_log.append("task", "task_fail",
                                  summary=f"[Task {task_id}] {name} failed: {err}",
                                  user_id=owner_user_id or None,
+                                 jid=task.get("owner_jid") or None,
                                  payload={"task_id": task_id, "name": name,
-                                          "error": err})
+                                          "error": err,
+                                          "owner_jid": task.get("owner_jid") or ""})
                 notify_on = task.get("notify_on") or "done"
                 if notify_on in ("failed", "always") and self.reporter_send:
                     self.reporter_send(task, "failed", err)
@@ -190,6 +194,8 @@ class Dispatcher:
 
         args = action.get("args") or ()
         kwargs = dict(action.get("kwargs") or {})
+        if "task_id" in kwargs:
+            kwargs["task_id"] = task.get("id", kwargs["task_id"])
 
         # Build a ProgressSession if the task owner has a JID we can post to.
         progress = None
@@ -254,20 +260,20 @@ def _format_progress_label(label: str) -> str:
     if label.startswith("reminder"):
         return f"⏰ {label}"
     return label
-    if result is None:
-        return ""
-    s = str(result)
-    return s if len(s) < 200 else s[:200] + "…"
 
 
 # ── Module singleton + helpers ────────────────────────────────────────────────
 _dispatcher: Dispatcher | None = None
+_pending_reporter_sender = None  # stored when the reporter plugs in before boot
 
 
 def start_dispatcher() -> None:
-    global _dispatcher
+    global _dispatcher, _pending_reporter_sender
     if _dispatcher is None:
         _dispatcher = Dispatcher()
+        if _pending_reporter_sender is not None:
+            _dispatcher.reporter_send = _pending_reporter_sender
+            _pending_reporter_sender = None
     _dispatcher.start()
 
 
@@ -280,9 +286,13 @@ def stop_dispatcher() -> None:
 
 def set_reporter_sender(fn) -> None:
     """Reporter plugs in its send_wa() function here after it boots."""
-    global _dispatcher
+    global _dispatcher, _pending_reporter_sender
     if _dispatcher:
         _dispatcher.reporter_send = fn
+    else:
+        # Dispatcher may not be created yet (lazy boot via health auto-heal).
+        # Stash it so start_dispatcher() applies it once the singleton exists.
+        _pending_reporter_sender = fn
 
 
 def get_dispatcher() -> Dispatcher | None:

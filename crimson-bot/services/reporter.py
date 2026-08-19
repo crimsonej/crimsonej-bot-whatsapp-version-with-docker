@@ -41,6 +41,8 @@ class Reporter:
         self._last_bridge_seen = time.time()
         self._bridge_ok = False
         self._bridge_alerted_for = 0  # silence_ms at last alert
+        self._last_autofix_ts = 0
+        self._autofix_dedupe_sec = int(cfg("autofix_alert_dedupe_sec") or 300)
 
     def start(self) -> None:
         global _reporter_thread, _reporter_stop
@@ -87,17 +89,35 @@ class Reporter:
     def _handle(self, evt: dict) -> None:
         kind = evt.get("kind")
         payload = evt.get("payload") or {}
+        src = evt.get("source") or ""
         if kind == "task_fail":
             task_id = payload.get("task_id")
             err = payload.get("error") or "no error message"
             name = payload.get("name") or "task"
             user_id = evt.get("user_id") or ""
-            jid = self._jid_for_user(user_id)
+            # Prefer the actual owner_jid stored on the task; fall back to
+            # reconstructing from user_phone. Avoid the broken strip-digits
+            # heuristic when the JID is already on the payload.
+            jid = (payload.get("owner_jid")
+                   or self._jid_for_user(user_id))
             if not jid:
                 return
             msg = (f"⚠️ task #{task_id} ({name}) flopped: {err}\n"
                    f"/status to inspect, or /tasks cancel {task_id}")
             self._send_wa(jid, msg)
+
+        # Autofix or health events should be notified to owner (summary only)
+        elif src == "autofix" or kind.startswith("autofix"):
+            now = time.time()
+            if now - self._last_autofix_ts < self._autofix_dedupe_sec:
+                return
+            self._last_autofix_ts = now
+            jid = cfg("owner_jid") or ""
+            if not jid:
+                return
+            summary = evt.get("summary") or f"Autofix event: {kind}"
+            body = f"🔧 Autofix: {summary}\nDetails: {payload or {}}"
+            self._send_wa(jid, body)
 
     # ── Bridge health ────────────────────────────────────────────────────────
     def _check_bridge(self) -> None:
@@ -159,14 +179,46 @@ class Reporter:
             body = _format_done(task_id, name, result)
         else:
             body = _format_fail(task_id, name, result)
+        # Deliver the actual file for download tasks: the bridge reads the
+        # shared filesystem path directly (no base64 over HTTP).
+        if status == "done" and isinstance(result, dict):
+            path = result.get("path") or ""
+            log.info("[Reporter] notify done for %s: path=%s ispublic=%s", name, path, result.get("is_public"))
+            if path and not str(path).startswith("http"):
+                import os as _os
+                if _os.path.isfile(path):
+                    import services.bridge_api as bridge_api
+                    r = bridge_api.bridge_send(
+                        jid, body,
+                        media_path=path,
+                        media_type=result.get("media_type") or "audio",
+                        filename=result.get("filename") or "file",
+                        timeout=300,
+                    )
+                    if r.get("ok"):
+                        log.info("[Reporter] media delivered for %s: mid=%s", name, r.get("message_id"))
+                    else:
+                        log.warning("[Reporter] media delivery FAILED for %s: %s", name, r.get("error"))
+                    return
+                else:
+                    log.info("[Reporter] path missing on disk, falling back to text")
         self._send_wa(jid, body)
 
     def _jid_for_user(self, user_id: str) -> str | None:
-        """Return a 'xxx@s.whatsapp.net' JID for a user_phone. None if we don't know."""
+        """Return a valid WhatsApp JID for a user_phone.
+
+        - If user_id already looks like a JID ('xxx@domain'), pass it through.
+        - Otherwise strip non-digits and assume @s.whatsapp.net.
+        Returns None if there's nothing to send to.
+        """
         if not user_id:
             return None
-        # Default: use CREATOR_PHONE if user_id matches; otherwise strip non-digits.
-        digits = "".join(ch for ch in str(user_id) if ch.isdigit())
+        s = str(user_id).strip()
+        if "@" in s:
+            # Already a JID. If the domain isn't a WhatsApp domain, leave it
+            # alone — the bridge will reject it if it's truly invalid.
+            return s
+        digits = "".join(ch for ch in s if ch.isdigit())
         if not digits:
             return None
         return f"{digits}@s.whatsapp.net"
@@ -176,7 +228,9 @@ class Reporter:
 def _format_done(task_id: str, name: str, result) -> str:
     summary = ""
     if isinstance(result, dict):
-        if result.get("url"):
+        if result.get("filename"):
+            summary = f"\nfile: {result.get('filename')}"
+        elif result.get("url"):
             summary = f"\nfile: {result.get('filename') or result.get('url')}"
         elif result.get("reply"):
             summary = f"\n{result['reply']}"

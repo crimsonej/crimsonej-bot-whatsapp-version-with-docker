@@ -1,52 +1,26 @@
 {
   "250203957407887": {
     "phone": "250203957407887",
-    "name": "crimson",
+    "name": "⠀",
     "nicknames": [
-      "serunjogi paul"
+      "Joa",
+      "crimson",
+      "crimson-test",
+      "Alex"
     ],
     "facts": [
-      "[",
-      "\"",
-      "j",
-      "u",
-      "s",
-      "t",
-      "m",
-      "e",
-      "]",
-      "'",
-      "l",
-      "i",
-      "v",
-      "n",
-      "K",
-      "a",
-      "p"
+      "favorite artist is Kendrick Lamar",
+      "is a software engineer"
     ],
     "interests": [
-      "[",
-      "]"
+      "hiphop music"
     ],
     "relationship": null,
     "preferences": {},
-    "interaction_count": 75,
-    "last_seen": "2026-08-15T21:16:12.845118",
-    "first_seen": "2026-08-13T16:52:28.126076",
-    "is_creator": false
-  },
-  "250203957407887@lid": {
-    "phone": "250203957407887@lid",
-    "name": "crimson",
-    "nicknames": [],
-    "facts": [],
-    "interests": [],
-    "relationship": null,
-    "preferences": {},
-    "interaction_count": 1,
-    "last_seen": "2026-08-13T23:51:00.969229",
-    "first_seen": "2026-08-13T23:51:00.969201",
-    "is_creator": false
+    "interaction_count": 115,
+    "last_seen": "2026-08-19T10:06:12.832787",
+    "first_seen": "2026-08-16T19:04:46.731606",
+    "is_creator": true
   },
   "21106022990028": {
     "phone": "21106022990028",
@@ -56,24 +30,22 @@
     "interests": [],
     "relationship": null,
     "preferences": {},
-    "interaction_count": 26,
-    "last_seen": "2026-08-15T20:45:53.189481",
-    "first_seen": "2026-08-14T08:53:40.013663",
+    "interaction_count": 19,
+    "last_seen": "2026-08-19T09:21:25.502585",
+    "first_seen": "2026-08-16T19:12:13.332779",
     "is_creator": false
   },
   "197217012990036": {
     "phone": "197217012990036",
-    "name": "Beekoh😜",
-    "nicknames": [
-      "Beekoh"
-    ],
+    "name": null,
+    "nicknames": [],
     "facts": [],
     "interests": [],
     "relationship": null,
     "preferences": {},
-    "interaction_count": 4,
-    "last_seen": "2026-08-14T12:09:51.837914",
-    "first_seen": "2026-08-14T11:00:40.066729",
+    "interaction_count": 1,
+    "last_seen": "2026-08-19T08:20:01.442181",
+    "first_seen": "2026-08-19T08:20:01.441221",
     "is_creator": false
   }
 }

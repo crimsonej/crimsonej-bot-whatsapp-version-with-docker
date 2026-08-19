@@ -168,16 +168,21 @@ def convert_video_for_whatsapp(input_path: str) -> str | None:
     output_path = f"{base}_whatsapp.mp4"
     cmd = [
         'ffmpeg', '-i', input_path,
-        '-c:v', 'libx264', '-profile:v', 'high', '-level', '4.0',
-        '-preset', 'fast', '-crf', '23',
-        '-c:a', 'aac', '-b:a', '192k',
+        '-vf', r'scale=min(720\,iw):-2',
+        '-c:v', 'libx264', '-profile:v', 'main', '-level', '3.1',
+        '-preset', 'fast', '-crf', '26',
+        '-c:a', 'aac', '-b:a', '128k',
+        '-fs', '100M',
         '-movflags', '+faststart',
         '-threads', '0', '-y', output_path,
     ]
     try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
-        return output_path
-    except Exception:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=600)
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+            return output_path
+        return None
+    except Exception as e:
+        log.error("[Video Convert] ffmpeg error: %s", e)
         return None
 
 def convert_audio_for_whatsapp(input_path: str) -> str | None:
@@ -188,7 +193,7 @@ def convert_audio_for_whatsapp(input_path: str) -> str | None:
         '-c:a', 'libopus', '-b:a', '128k', '-y', output_path,
     ]
     try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+        subprocess.run(cmd, check=True, capture_output=True, timeout=300)
         return output_path
     except Exception as e:
         log.error("[Audio Convert] ffmpeg error: %s", e)
@@ -387,10 +392,10 @@ def download_youtube_sync(url: str, media_type: str = "audio", retries: int = 2,
                         except Exception:
                             pass
                         continue
-                rc = proc.wait(timeout=180)
+                rc = proc.wait(timeout=600)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                LAST_DL_ERROR = "yt-dlp timed out after 180s"
+                LAST_DL_ERROR = "yt-dlp timed out after 600s"
                 log.warning("[Media] yt-dlp timeout")
                 continue
             except Exception as e:
@@ -440,7 +445,7 @@ def download_youtube_sync(url: str, media_type: str = "audio", retries: int = 2,
                                 'ffmpeg', '-i', video_p, '-i', audio_p,
                                 '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-y', merged
                             ]
-                            mres = subprocess.run(cmd_merge, capture_output=True, text=True, timeout=120)
+                            mres = subprocess.run(cmd_merge, capture_output=True, text=True, timeout=300)
                             if mres.returncode == 0 and os.path.exists(merged) and os.path.getsize(merged) > 5000:
                                 chosen = merged
                                 log.info("[Media] merged video+audio into %s", merged)
@@ -515,7 +520,7 @@ def download_youtube_sync(url: str, media_type: str = "audio", retries: int = 2,
                             '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
                             '-movflags', '+faststart', '-y', remuxed,
                         ]
-                        rres = subprocess.run(cmd_remux, capture_output=True, text=True, timeout=120)
+                        rres = subprocess.run(cmd_remux, capture_output=True, text=True, timeout=600)
                         if rres.returncode == 0 and os.path.exists(remuxed) and os.path.getsize(remuxed) > 5000:
                             log.info("[Media] remuxed to AAC: %s -> %s", os.path.basename(p), os.path.basename(remuxed))
                             try: os.remove(p)
@@ -537,16 +542,17 @@ def download_youtube_sync(url: str, media_type: str = "audio", retries: int = 2,
             filename = os.path.basename(p).replace(prefix, "").replace("_", " ")
             if progress is not None:
                 try:
-                    progress.update(95, "uploading")
+                    progress.update(95, "preparing media")
                 except Exception:
                     pass
-            upload_url = upload_file_public(p)
-            if upload_url:
-                try: os.remove(p)
-                except Exception: pass
-                # dispatcher._invoke's try/finally will call progress.finish()
-                # (which deletes the progress message) once we return.
-                return upload_url, filename
+            # Return local file path for direct native WhatsApp media delivery.
+            # Only fall back to public upload if local file size exceeds 100MB.
+            if os.path.getsize(p) > 100 * 1024 * 1024:
+                upload_url = upload_file_public(p)
+                if upload_url:
+                    try: os.remove(p)
+                    except Exception: pass
+                    return upload_url, filename
 
             return p, filename
         except Exception as e:
@@ -578,6 +584,19 @@ def _score_search_hit(hit: dict, media_type: str, query: str = "") -> int:
     views = hit.get("views") or 0
     duration = hit.get("duration") or 0
     ql = (query or "").lower()
+
+    # Query-token overlap — the strongest signal. A title that shares the
+    # user's exact words beats one that merely looks popular.
+    if ql:
+        _stop = {"the", "a", "an", "of", "to", "in", "for", "and", "with", "official", "video", "lyrics", "youtube", "music", "audio"}
+        q_tokens = {t for t in re.findall(r"[a-z0-9]+", ql) if t not in _stop}
+        t_tokens = {t for t in re.findall(r"[a-z0-9]+", title) if t not in _stop}
+        overlap = len(q_tokens & t_tokens)
+        score += overlap * 2
+        extra = len(t_tokens - q_tokens)
+        score -= extra * 3
+        if ql.strip() in title or title in ql.strip():
+            score += 10
 
     # Popularity
     if views > 1_000_000:

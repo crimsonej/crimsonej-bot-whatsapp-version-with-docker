@@ -212,13 +212,21 @@ task_store = TaskStore()
 
 
 # ── Built-in actions callable by the dispatcher ───────────────────────────────
-def run_user_reminder(*, owner_jid: str, owner_user_id: str, what: str,
-                      task_name: str, progress=None) -> dict:
-    """Notify the user that a scheduled reminder fired."""
+def run_user_reminder(*, owner_jid: str = "", owner_user_id: str = "",
+                      what: str = "", task_name: str = "reminder",
+                      progress=None) -> dict:
+    """Notify the user that a scheduled reminder fired.
+
+    All keyword args are optional with safe defaults so that legacy/stale
+    tasks persisted before a schema change won't crash the dispatcher
+    (they'll just produce a degraded reminder instead of a retry storm).
+    """
     if not owner_jid:
+        # No recipient on file — fail loudly so the task is marked failed
+        # and won't be requeued infinitely.
         raise RuntimeError("reminder has no owner_jid")
 
-    msg = f"⏰ reminder: {task_name}\n{what}".strip()
+    msg = f"⏰ reminder: {task_name}\n{what}".strip() if what else f"⏰ reminder: {task_name}"
     import services.bridge_api as bridge_api
     r = bridge_api.bridge_send(owner_jid, msg)
     if r.get("ok"):

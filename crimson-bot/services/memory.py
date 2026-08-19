@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import datetime
 from typing import Any
@@ -18,6 +19,20 @@ from core.config import (
 from profiles import ProfileManager
 
 profile_mgr = ProfileManager()
+
+def _sanitize_session_content(role: str, content: str) -> str:
+    """Drop raw tool payloads and placeholder links before storing them in session memory."""
+    text = str(content or "").strip()
+    if role != "assistant" or not text:
+        return text
+    lower = text.lower()
+    if re.match(r'^\s*\{.*?"name"\s*:\s*".*?".*?"parameters"\s*:\s*\{', text, re.DOTALL):
+        return "I’m not meant to send raw tool data. Tell me the exact track/version and I’ll sort it cleanly."
+    if "example.com" in lower or "audio-download-link" in lower or "video-download-link" in lower:
+        return "I sent the wrong thing there. Tell me the exact track/version and I’ll do it properly."
+    if "download_video function" in lower or "download_audio function" in lower:
+        return "I’m not supposed to expose the tool call. Tell me the exact track/version and I’ll sort it cleanly."
+    return text
 
 class Session:
     __slots__ = ("turns", "last_active", "_on_update", "_skip_next_user_add")
@@ -36,6 +51,7 @@ class Session:
             # don't double-add the same content.
             self._skip_next_user_add = False
             return
+        content = _sanitize_session_content(role, content)
         turn: dict[str, Any] = {"role": role, "content": content}
         if message_id:
             turn["id"] = message_id
@@ -90,7 +106,14 @@ class SessionStore:
         data = load_json(SESSIONS_FILE, {})
         for sender, turns in data.items():
             s = Session(on_update=self.save)
-            s.turns = turns.get("turns", [])
+            cleaned_turns = []
+            for turn in turns.get("turns", []):
+                if not isinstance(turn, dict):
+                    continue
+                clean = dict(turn)
+                clean["content"] = _sanitize_session_content(clean.get("role", "user"), clean.get("content", ""))
+                cleaned_turns.append(clean)
+            s.turns = cleaned_turns
             s.last_active = turns.get("last_active", time.time())
             self._store[sender] = s
 
@@ -161,8 +184,11 @@ def learn_task_background(user_phone: str, text_to_learn: str, doc_name: str | N
             return
 
         verify_prompt = (
-            f"Analyze this content for factual validity:\n\n{text_to_learn[:3000]}\n\n"
-            f"If it is complete nonsense/fake, reply ONLY 'FAKE'. Otherwise reply 'VALID'."
+            f"Analyze this content for factual validity. Reply ONLY 'FAKE' if it is "
+            f"gibberish, clearly fabricated nonsense, or contradicts well-known facts. "
+            f"Personal statements, preferences, claims about the user or a chatbot, and "
+            f"unverifiable but plausible statements are VALID.\n\nContent:\n\n{text_to_learn[:3000]}\n\n"
+            f"Reply ONLY 'FAKE' or 'VALID'."
         )
         verify_res = nvidia_scout_fn([{"role": "user", "content": verify_prompt}], max_tokens=10)
         status = getattr(verify_res.choices[0].message, "content", "").strip().upper()
@@ -193,5 +219,59 @@ def learn_task_background(user_phone: str, text_to_learn: str, doc_name: str | N
             f.write(f"\n\n--- Learned on {timestamp} (Source: {source_label}) ---\n{facts}")
 
         log.info("[Learn] Learned facts saved to %s", vault_path)
+        # Also append learned facts to vectors.json with per-user metadata so
+        # RAG can surface user-specific chunks later.
+        try:
+            # Use rag.append_text_to_vectors to split facts into chunks and add metadata
+            from services.rag import append_text_to_vectors
+            append_text_to_vectors(facts, owner=user_phone or "", group="", source=(doc_name or "learned"))
+        except Exception as e:
+            log.debug("[Learn] could not append to vectors.json via rag: %s", e)
     except Exception as e:
         log.error("[Learn] Background learn task failed: %s", e)
+
+
+def extract_preferences_background(user_phone: str, text_sample: str, nvidia_scout_fn=None):
+    """Extract likely user preferences from a short text sample using a scout LLM.
+
+    This is intentionally lightweight and tolerant of failure. The extracted
+    preferences are merged into the user's profile preferences.
+    """
+    try:
+        if not nvidia_scout_fn:
+            log.debug("[Pref] no scout function provided; skipping preference extraction")
+            return
+        prompt = (
+            "Extract simple preference key/value pairs from the following user text.\n"
+            "Return JSON only, e.g. {\"music\": \"afrobeats\"}.\n\n"
+            f"Text:\n{text_sample[:4000]}"
+        )
+        res = nvidia_scout_fn([{"role": "user", "content": prompt}], max_tokens=256)
+        # best-effort parse
+        content = getattr(res.choices[0].message, "content", "") if res else ""
+        content = content.strip()
+        import json as _json
+        prefs = {}
+        try:
+            # allow the model to return either bare JSON or a line with JSON
+            if content.startswith('{'):
+                prefs = _json.loads(content)
+            else:
+                # find first { ... }
+                import re as _re
+                m = _re.search(r"\{.*\}", content, _re.DOTALL)
+                if m:
+                    prefs = _json.loads(m.group(0))
+        except Exception:
+            log.debug("[Pref] could not parse scout output: %s", content[:200])
+            return
+
+        if prefs and isinstance(prefs, dict):
+            try:
+                profile_mgr.merge_preferences(user_phone or "", prefs)
+                log.info("[Pref] merged preferences for %s: %s", user_phone, list(prefs.keys()))
+            except Exception as e:
+                log.debug("[Pref] failed to merge prefs: %s", e)
+    except Exception as e:
+        log.debug("[Pref] extraction failed: %s", e)
+

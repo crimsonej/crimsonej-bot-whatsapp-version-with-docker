@@ -15,6 +15,7 @@ session. The caller passes the message_id explicitly so the kinds can't mix.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from core.config import log
@@ -64,7 +65,7 @@ def _last_tool_showed_task_id(messages: list[dict[str, Any]]) -> bool:
     if last is None:
         return False
     c = last.get("content") or ""
-    if isinstance(c, str) and '"task_id"' in c and '"ok": true' in c:
+    if isinstance(c, str) and '"task_id"' in c:
         return True
     return False
 
@@ -104,8 +105,16 @@ def verify_and_correct(reply: dict[str, Any], messages: list[dict[str, Any]],
     lower = text.lower()
 
     # Rule 1: REPLY_DELETE
+    task_exists = False
+    m = re.search(r"#([0-9a-f]{6,})", text)
+    if m:
+        try:
+            from services.tasks import task_store
+            task_exists = task_store.get(m.group(1)) is not None
+        except Exception:
+            task_exists = True  # fail-closed: never delete on lookup errors
     if any(lower.startswith(p) for p in _ENQUEUED_PHRASES):
-        if not _last_tool_showed_task_id(messages) and _no_running_task_for(user_id):
+        if not task_exists and not _last_tool_showed_task_id(messages) and _no_running_task_for(user_id):
             log.info("[Self-correct] REPLY_DELETE user=%s text=%r",
                      user_id, text[:60])
             return {"action": "delete", "new_text": ""}

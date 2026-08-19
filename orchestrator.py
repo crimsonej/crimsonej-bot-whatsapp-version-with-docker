@@ -106,6 +106,13 @@ def stop_services() -> None:
         else:
             print(f"  • {name} was not running.")
 
+def restart_services() -> None:
+    print("\033[1;36m♻️  Restarting Crimsonej Services...\033[0m")
+    stop_services()
+    print("  • Waiting 2s for ports to release...")
+    time.sleep(2)
+    start_services()
+
 def status_services() -> None:
     print("\033[1;36m=== Crimsonej System Status ===\033[0m")
 
@@ -159,6 +166,8 @@ if __name__ == "__main__":
         start_services()
     elif cmd == "stop":
         stop_services()
+    elif cmd == "restart":
+        restart_services()
     elif cmd == "status":
         status_services()
     elif cmd == "logs":

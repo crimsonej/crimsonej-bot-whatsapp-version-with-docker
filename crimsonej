@@ -17,6 +17,9 @@ case "$COMMAND" in
     stop)
         "$PYTHON_BIN" "$ROOT_DIR/orchestrator.py" stop
         ;;
+    restart)
+        "$PYTHON_BIN" "$ROOT_DIR/orchestrator.py" restart
+        ;;
     status)
         "$PYTHON_BIN" "$ROOT_DIR/orchestrator.py" status
         ;;
@@ -33,12 +36,13 @@ case "$COMMAND" in
         ;;
     help|--help|-h)
         echo "🤖 Crimsonej CLI Usage:"
-        echo "  crimsonej start   - Launch AI Server & WhatsApp Bridge"
-        echo "  crimsonej stop    - Stop all running bot processes"
-        echo "  crimsonej status  - Check status of both services and health"
-        echo "  crimsonej logs    - Tail live logs (use 'crimsonej logs bot' or 'crimsonej logs bridge')"
-        echo "  crimsonej setup   - Run interactive API key configuration wizard"
-        echo "  crimsonej reindex - Rebuild RAG Knowledge Base vector index"
+        echo "  crimsonej start    - Launch AI Server & WhatsApp Bridge"
+        echo "  crimsonej stop     - Stop all running bot processes"
+        echo "  crimsonej restart  - Restart both services (picks up code changes)"
+        echo "  crimsonej status   - Check status of both services and health"
+        echo "  crimsonej logs     - Tail live logs (use 'crimsonej logs bot' or 'crimsonej logs bridge')"
+        echo "  crimsonej setup    - Run interactive API key configuration wizard"
+        echo "  crimsonej reindex  - Rebuild RAG Knowledge Base vector index"
         ;;
     *)
         echo "Unknown command: $COMMAND"

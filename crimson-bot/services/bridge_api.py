@@ -42,10 +42,19 @@ def _post(path: str, payload: dict, *, timeout: int) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def bridge_send(jid: str, text: str, *, timeout: int = 8) -> dict[str, Any]:
+def bridge_send(jid: str, text: str, *, timeout: int = 8, media_path: str = "",
+                media_type: str = "audio", filename: str = "") -> dict[str, Any]:
     """Send a WhatsApp text message. Returns {ok, message_id, message_key, ts}
-    on success or {ok:False, error} on failure."""
-    return _post("/send_message", {"jid": jid, "text": text}, timeout=timeout)
+    on success or {ok:False, error} on failure.
+
+    Optional `media_path` (local file, shared filesystem with the bridge)
+    delivers the file as an audio/video/message instead of text."""
+    # Use longer timeout for media uploads (up to 5 min for large files)
+    if media_path:
+        timeout = max(timeout, 300)
+    return _post("/send_message", {"jid": jid, "text": text,
+                                    "path": media_path, "media_type": media_type,
+                                    "filename": filename}, timeout=timeout)
 
 
 def bridge_edit(jid: str, message_id: str, new_text: str, *, timeout: int = 6) -> dict[str, Any]:

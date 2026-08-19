@@ -39,6 +39,7 @@ class ProgressSession:
         self._label: str = ""
         self._lock = threading.Lock()
         self._finished = False
+        self.started_at: float | None = None
 
     # ── Public API ───────────────────────────────────────────────────────────
     def start(self, label: str) -> None:
@@ -53,6 +54,7 @@ class ProgressSession:
             if r.get("ok") and r.get("message_id"):
                 self._message_id = str(r["message_id"])
                 self._last_text = text
+                self.started_at = time.time()
                 log.debug("[Progress] started: jid=%s mid=%s text=%r",
                           self.jid.split("@")[0], self._message_id, text)
             else:
@@ -73,11 +75,12 @@ class ProgressSession:
             if text == self._last_text:
                 return
             self._last_text = text
-        bridge_api.bridge_edit(self.jid, self._message_id, text)
-        self._last_update_ts = now
+            self._last_update_ts = now  # update inside lock to prevent race
+            mid = self._message_id
+        bridge_api.bridge_edit(self.jid, mid, text)
 
     def finish(self) -> None:
-        """Delete the progress message. Idempotent and lock-safe."""
+        """Delete the progress message. Idempotent and lock-safe. Retries on failure."""
         with self._lock:
             if self._finished:
                 return
@@ -85,9 +88,20 @@ class ProgressSession:
             mid = self._message_id
             self._message_id = None
         if mid:
-            r = bridge_api.bridge_delete(self.jid, mid)
-            log.debug("[Progress] finish delete mid=%s ok=%s err=%s",
-                      mid, r.get("ok"), r.get("error"))
+            for attempt in range(3):
+                r = bridge_api.bridge_delete(self.jid, mid)
+                if r.get("ok"):
+                    log.debug("[Progress] finish delete mid=%s ok=True attempt=%d", mid, attempt + 1)
+                    break
+                log.debug("[Progress] finish delete mid=%s attempt=%d err=%s", mid, attempt + 1, r.get("error"))
+                if attempt < 2:
+                    time.sleep(0.5)
+
+    def age(self) -> float:
+        """Return seconds since start; 0 if never started."""
+        if not self.started_at:
+            return 0.0
+        return time.time() - self.started_at
 
     # ── Introspection ────────────────────────────────────────────────────────
     @property
