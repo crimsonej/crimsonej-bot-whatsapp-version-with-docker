@@ -1,0 +1,43 @@
+{
+  "test": {
+    "strikes": 0,
+    "escalation_level": 0,
+    "last_action": null,
+    "cooldown_until": 0,
+    "violation_history": [
+      {
+        "type": "harassment",
+        "message": "kys",
+        "timestamp": "2026-08-20T17:02:46.941832+03:00"
+      },
+      {
+        "type": "harassment",
+        "message": "kys",
+        "timestamp": "2026-08-20T17:09:20.377082+03:00"
+      },
+      {
+        "type": "harassment",
+        "message": "kys",
+        "timestamp": "2026-08-20T17:11:06.707992+03:00"
+      }
+    ]
+  },
+  "newuser": {
+    "strikes": 0,
+    "escalation_level": 0,
+    "last_action": null,
+    "cooldown_until": 0,
+    "violation_history": [
+      {
+        "type": "harassment",
+        "message": "kys",
+        "timestamp": "2026-08-20T17:02:46.949889+03:00"
+      },
+      {
+        "type": "harassment",
+        "message": "kys",
+        "timestamp": "2026-08-20T17:09:20.381330+03:00"
+      }
+    ]
+  }
+}

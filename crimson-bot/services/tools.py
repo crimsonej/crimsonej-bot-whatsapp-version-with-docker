@@ -75,6 +75,29 @@ GENERATE_STICKER_TOOL = {
     }
 }
 
+SMART_STICKER_RESPONSE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "smart_sticker_response",
+        "description": "Analyze an incoming sticker/image using vision and generate a contextually appropriate response sticker. Analyzes the incoming sticker's content, mood, and context, then generates an appropriate response sticker.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sticker_base64": {
+                    "type": "string",
+                    "description": "The base64 encoded sticker/image data to analyze and respond to."
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Optional context about the conversation or situation.",
+                    "default": ""
+                }
+            },
+            "required": ["sticker_base64"]
+        }
+    }
+}
+
 GENERATE_IMAGE_TOOL = {
     "type": "function",
     "function": {
@@ -135,6 +158,88 @@ DOWNLOAD_VIDEO_TOOL = {
                 }
             },
             "required": ["query"]
+        }
+    }
+}
+
+ANALYZE_VIDEO_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "analyze_video",
+        "description": (
+            "Analyze a video using AI to understand its content, describe scenes, "
+            "answer questions about it, or extract information. Provide a base64 encoded video "
+            "or a URL. Supports mp4, webm, mov formats. The model can reason about video content, "
+            "describe scenes, track objects, transcribe speech, and answer questions about the video."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "video_base64": {
+                    "type": "string",
+                    "description": "The base64 encoded video data."
+                },
+                "video_url": {
+                    "type": "string",
+                    "description": "A URL to the video (alternative to base64)."
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "The question or instruction for analyzing the video.",
+                    "default": "Describe this video in detail. What happens, who is in it, what is being said?"
+                },
+                "max_duration_seconds": {
+                    "type": "integer",
+                    "description": "Maximum duration of video to analyze (default 60 seconds).",
+                    "default": 60
+                }
+            },
+            "required": ["prompt"]
+        }
+    }
+}
+
+PARSE_DOCUMENT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "parse_document",
+        "description": (
+            "Parse and extract content from documents (PDF, DOCX, PPTX, XLSX, images, etc.). "
+            "Extracts text, tables, images, and structure. Can also answer questions about the document. "
+            "Provide a base64 encoded document or a URL. Supports PDF, DOCX, PPTX, XLSX, TXT, images, etc."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "document_base64": {
+                    "type": "string",
+                    "description": "The base64 encoded document data."
+                },
+                "document_url": {
+                    "type": "string",
+                    "description": "A URL to the document (alternative to base64)."
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "The filename with extension (e.g., 'report.pdf', 'data.xlsx')."
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "The question or instruction for analyzing the document.",
+                    "default": "Extract all text, tables, and key information from this document."
+                },
+                "extract_images": {
+                    "type": "boolean",
+                    "description": "Whether to extract images from the document (default false).",
+                    "default": False
+                },
+                "extract_tables": {
+                    "type": "boolean",
+                    "description": "Whether to extract tables as structured data (default true).",
+                    "default": True
+                }
+            },
+            "required": ["prompt"]
         }
     }
 }
@@ -656,8 +761,11 @@ LIST_BRIEFINGS_TOOL = {
 ALL_TOOLS = [
     WEB_SEARCH_TOOL,
     ANALYZE_IMAGE_TOOL,
+    ANALYZE_VIDEO_TOOL,
+    PARSE_DOCUMENT_TOOL,
     GENERATE_IMAGE_TOOL,
     GENERATE_STICKER_TOOL,
+    SMART_STICKER_RESPONSE_TOOL,
     DOWNLOAD_AUDIO_TOOL,
     DOWNLOAD_VIDEO_TOOL,
     POST_STATUS_TOOL,
@@ -746,6 +854,30 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
             prompt = args.get("prompt", "")
             enriched_prompt = _enrich_image_prompt(prompt)
             if vision_service:
+                sticker_b64 = vision_service.generate_sticker_auto(enriched_prompt)
+                if sticker_b64:
+                    tool_results["sticker_list"].append(sticker_b64)
+                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Success"})
+                    continue
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Failed"})
+
+        elif name == "smart_sticker_response":
+            sticker_base64 = args.get("sticker_base64", "")
+            context = args.get("context", "")
+            if vision_service and sticker_base64:
+                # First analyze the incoming sticker
+                analysis = vision_service.analyze_image_with_nvidia(
+                    sticker_base64,
+                    "Analyze this sticker: describe the character, emotion, action, style, and mood. What would be an appropriate, contextually relevant response sticker?"
+                )
+                # Generate appropriate response sticker based on analysis
+                response_prompt = (
+                    f"Context: {context}\n"
+                    f"Incoming sticker analysis: {analysis}\n"
+                    f"Generate an appropriate, contextually relevant response sticker description. "
+                    f"Match the style, energy, and emotional tone. Be creative but appropriate."
+                )
+                enriched_prompt = _enrich_image_prompt(response_prompt)
                 sticker_b64 = vision_service.generate_sticker_auto(enriched_prompt)
                 if sticker_b64:
                     tool_results["sticker_list"].append(sticker_b64)
@@ -1272,6 +1404,77 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
             messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
                              "content": json.dumps({"ok": True, "reply": reply})})
             return {**tool_results, "reply": reply}
+
+        elif name == "analyze_video":
+            # Accept both tool schema names and bridge's field names
+            video_base64 = args.get("video_base64", "") or args.get("video_data", "") or args.get("video", "")
+            video_url = args.get("video_url", "")
+            prompt = args.get("prompt", "Describe this video in detail. What happens, who is in it, what is being said?")
+            max_duration = int(args.get("max_duration_seconds", 60))
+            
+            if not video_base64 and not video_url:
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
+                                 "content": json.dumps({"ok": False, "error": "video_base64 or video_url required"})})
+            else:
+                from services.vision import analyze_video_with_nvidia
+                description = analyze_video_with_nvidia(
+                    video_base64=video_base64,
+                    video_url=video_url,
+                    prompt=prompt,
+                    max_duration_seconds=max_duration
+                )
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": description or "Failed."})
+
+        elif name == "parse_document":
+            # Accept both the tool schema names and the bridge's field names
+            document_base64 = args.get("document_base64", "") or args.get("document_data", "") or args.get("document", "")
+            document_url = args.get("document_url", "")
+            filename = args.get("filename", "") or args.get("document_name", "")
+            prompt = args.get("prompt", "Extract all text, tables, and key information from this document.")
+            extract_images = args.get("extract_images", False)
+            extract_tables = args.get("extract_tables", True)
+            
+            # If no base64 provided, try to get the latest document from bot's doc_session
+            if not document_base64 and not document_url:
+                try:
+                    from bot import doc_session
+                    # Get the most recent document from doc_session
+                    if doc_session:
+                        # Get the most recently added document
+                        latest_doc = None
+                        for key, doc in doc_session.items():
+                            if doc.get("base64"):
+                                latest_doc = doc
+                                break
+                        if latest_doc:
+                            document_base64 = latest_doc.get("base64", "")
+                            if not filename:
+                                filename = latest_doc.get("name", "document")
+                            log.info(f"[Tool] Using document from session: {filename}")
+                except ImportError:
+                    pass
+                except Exception as e:
+                    log.warning(f"[Tool] Could not get document from session: {e}")
+            
+            if not document_base64 and not document_url:
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
+                                 "content": json.dumps({"ok": False, "error": "document_base64 or document_url required"})})
+            else:
+                from services.vision import parse_document_with_nvidia
+                result = parse_document_with_nvidia(
+                    document_base64=document_base64,
+                    document_url=document_url,
+                    filename=filename,
+                    prompt=prompt,
+                    extract_images=extract_images,
+                    extract_tables=extract_tables
+                )
+                if isinstance(result, dict) and result.get("text"):
+                    reply = result["text"]
+                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(result)})
+                    return {**tool_results, "reply": reply}
+                else:
+                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": result or "Failed."})
 
     return tool_results
 

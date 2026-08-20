@@ -1,58 +1,62 @@
 {
-  "250203957407887": {
-    "phone": "250203957407887",
-    "name": "Elijah",
-    "nicknames": [
-      "crimson",
-      "crimson-test",
-      "Alex",
-      "⠀",
-      "Admin"
-    ],
-    "facts": [
-      "favorite artist is Kendrick Lamar",
-      "is a software engineer"
-    ],
-    "interests": [
-      "hiphop music"
-    ],
-    "relationship": null,
-    "preferences": {},
-    "interaction_count": 125,
-    "last_seen": "2026-08-20T03:32:32.750854",
-    "first_seen": "2026-08-16T19:04:46.731606",
-    "is_creator": true
-  },
-  "21106022990028": {
-    "phone": "21106022990028",
+  "test": {
+    "phone": "test",
     "name": "John",
-    "nicknames": [
-      "John Reigns"
-    ],
+    "nicknames": [],
     "facts": [],
     "interests": [],
     "relationship": null,
     "preferences": {},
-    "interaction_count": 60,
-    "last_seen": "2026-08-20T03:37:15.616037",
-    "first_seen": "2026-08-16T19:12:13.332779",
-    "is_creator": false
+    "interaction_count": 3,
+    "last_seen": "2026-08-20T16:57:57.071796",
+    "first_seen": "2026-08-20T16:57:19.126549",
+    "is_creator": false,
+    "ignore_status": false
   },
-  "197217012990036": {
-    "phone": "197217012990036",
+  "test_user": {
+    "phone": "test_user",
     "name": null,
+    "nicknames": [],
+    "facts": [],
+    "interests": [],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 0,
+    "last_seen": null,
+    "first_seen": "2026-08-20T16:57:57.069102",
+    "is_creator": false,
+    "ignore_status": true
+  },
+  "test_user@s.w": {
+    "phone": "test_user@s.w",
+    "name": null,
+    "nicknames": [],
+    "facts": [],
+    "interests": [],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 0,
+    "last_seen": null,
+    "first_seen": "2026-08-20T16:59:09.451401",
+    "is_creator": false,
+    "ignore_status": true
+  },
+  "test@s.w": {
+    "phone": "test@s.w",
+    "name": "John",
     "nicknames": [],
     "facts": [],
     "interests": [],
     "relationship": null,
     "preferences": {},
     "interaction_count": 1,
-    "last_seen": "2026-08-19T08:20:01.442181",
-    "first_seen": "2026-08-19T08:20:01.441221",
-    "is_creator": false
+    "last_seen": "2026-08-20T16:59:09.455816",
+    "first_seen": "2026-08-20T16:59:09.455797",
+    "is_creator": false,
+    "ignore_status": true
   },
-  "user@s.whatsapp.net": {
-    "phone": "user@s.whatsapp.net",
+  "test_user2": {
+    "phone": "test_user2",
     "name": null,
     "nicknames": [],
     "facts": [],
@@ -61,11 +65,12 @@
     "preferences": {},
     "interaction_count": 0,
     "last_seen": null,
-    "first_seen": "2026-08-20T02:17:05.613495",
-    "is_creator": false
+    "first_seen": "2026-08-20T17:02:03.954191",
+    "is_creator": false,
+    "ignore_status": false
   },
-  "admin@s.whatsapp.net": {
-    "phone": "admin@s.whatsapp.net",
+  "test2": {
+    "phone": "test2",
     "name": null,
     "nicknames": [],
     "facts": [],
@@ -74,11 +79,12 @@
     "preferences": {},
     "interaction_count": 0,
     "last_seen": null,
-    "first_seen": "2026-08-20T02:43:35.538196",
-    "is_creator": false
+    "first_seen": "2026-08-20T17:02:03.955278",
+    "is_creator": false,
+    "ignore_status": false
   },
-  "bot@s.whatsapp.net": {
-    "phone": "bot@s.whatsapp.net",
+  "250203957407887": {
+    "phone": "250203957407887",
     "name": null,
     "nicknames": [],
     "facts": [],
@@ -87,11 +93,12 @@
     "preferences": {},
     "interaction_count": 0,
     "last_seen": null,
-    "first_seen": "2026-08-20T02:43:35.544741",
-    "is_creator": false
+    "first_seen": "2026-08-20T17:02:46.949689",
+    "is_creator": false,
+    "ignore_status": false
   },
-  "newuser@s.whatsapp.net": {
-    "phone": "newuser@s.whatsapp.net",
+  "newuser": {
+    "phone": "newuser",
     "name": null,
     "nicknames": [],
     "facts": [],
@@ -100,7 +107,8 @@
     "preferences": {},
     "interaction_count": 0,
     "last_seen": null,
-    "first_seen": "2026-08-20T02:43:35.547910",
-    "is_creator": false
+    "first_seen": "2026-08-20T17:02:46.949854",
+    "is_creator": false,
+    "ignore_status": false
   }
 }

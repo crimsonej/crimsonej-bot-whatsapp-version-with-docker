@@ -79,6 +79,49 @@ from services.personality import (
     select_tone,
     should_roast,
     build_personality_prompt,
+    get_session_mood,
+    set_session_mood,
+)
+
+from services.feedback import (
+    detect_feedback,
+    record_feedback,
+    get_feedback_summary,
+    get_feedback_ratio,
+    should_adapt_behavior,
+    get_adaptation_hint,
+    process_feedback_message,
+)
+
+from services.summarizer import (
+    summarize_conversation,
+    get_conversation_summary,
+    get_summary_context,
+    maybe_summarize,
+)
+
+from services.memory_link import (
+    link_session_memory,
+    get_cross_session_context,
+    get_user_memory_graph,
+)
+
+from services.boundaries import (
+    detect_violation,
+    check_and_enforce,
+    get_user_boundary_status,
+    reset_user_boundaries,
+)
+
+from services.events import (
+    get_event_context,
+    get_market_context,
+    get_personal_event_context,
+    add_personal_event,
+    get_personal_events,
+)
+
+from services.personality import (
     Mood,
     Tone,
     Relationship,
@@ -463,9 +506,9 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
             "💬 *User Commands:*\n"
             "📄 */read [prompt]* - Summarize or query an attached/quoted document (.pdf, .docx, .txt)\n"
             "🧠 */learn [text/doc]* - Store document or text in permanent long-term memory\n"
-            
+            "🎥 */analyze_video [prompt]* - Analyze a video (analyze_video tool with video_url/video_base64)\n"
+            "📄 */parse_document [prompt]* - Parse document/PDF (parse_document tool with document_base64/document_url)\n"
             "🎨 */imagine <prompt>* - Generate image (NVIDIA Flux 2 / HF Schnell)\n"
-            # image-edit removed
             "✨ */sticker [prompt]* - Generate sticker or convert media to WebP sticker\n"
             "📸 */reg-img [prompt]* - Analyze image using NVIDIA VLM vision intelligence\n"
             "🎵 */song-audio <name/link>* - Search and download audio track\n"
@@ -484,15 +527,6 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
             "📊 */mtf <symbol>* - Multi-timeframe analysis (Daily, 4H, 1H)\n"
             "🔍 */patterns <symbol> [interval]* - Detect chart patterns\n"
             "📓 */journal log <trade> | stats* - Log trades & view stats\n\n"
-            "👑 *Master Control (Creator Commands):*\n"
-            "• `master control chela` - Authenticate as Creator & grant full access\n"
-            "• `master control status_posting [on/off]` - Toggle status posting\n"
-            "• `master control status_reply [on/off]` - Toggle auto-replying to statuses\n"
-            "• `master control scheduler [on/off]` - Toggle background status scheduler\n"
-            "• `master control interval [hours]` - Set posting interval in hours\n"
-            "• `master control topic add/remove/clear/list` - Manage status topic list\n"
-            "• `master control status_now` - Trigger immediate status post\n"
-            "• `master control config` - View active Master Control configuration\n\n"
             "🏠 *Group Commands:*\n"
             "• `/group_fact <text>` - Store a fact in group memory (group only)\n"
             "• `/group_facts` - View group memory vault (group only)\n"
@@ -904,7 +938,7 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
         " [SITUATIONAL AWARENESS: You are Crimsonej. Respond naturally and helpfully.]\n\n"
     )
     system_prompt += cfg("system_prompt")
-    system_prompt += build_personality_prompt(user_id, question, personality_context)
+    system_prompt += build_personality_prompt(user_id, question, personality_context, session_key)
 
     # ── Per-user profile context (name, facts, interests, familiarity) ────────
     user_context = profile_mgr.get_context_string(user_id)
@@ -929,12 +963,50 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
         system_prompt += get_group_vault_context(sender)
 
     system_prompt += get_vault_context(user_id)
+    
+    # ── Cross-session memory links ──────────────────────────────────────────────
+    system_prompt += get_cross_session_context(user_id)
+    
+    # ── Conversation summary ───────────────────────────────────────────────────
+    system_prompt += get_summary_context(session_key)
+    
+    # ── Events & Market Context ────────────────────────────────────────────────
+    system_prompt += get_event_context()
+    system_prompt += get_market_context()
+    system_prompt += get_personal_event_context(user_id)
+    
+    # ── Feedback Adaptation ────────────────────────────────────────────────────
+    adaptation_hint = get_adaptation_hint(user_id)
+    if adaptation_hint:
+        system_prompt += f"\n[FEEDBACK ADAPTATION] {adaptation_hint}\n"
+    
+    # ── Boundary Status ────────────────────────────────────────────────────────
+    boundary_status = get_user_boundary_status(user_id)
+    if boundary_status["is_cooled_down"]:
+        system_prompt += f"\n[BOUNDARY] User is on cooldown ({boundary_status['cooldown_remaining']}s remaining). Be brief.\n"
+    elif boundary_status["strikes"] > 0:
+        system_prompt += f"\n[BOUNDARY] User has {boundary_status['strikes']} strikes. Be mindful.\n"
+    
     system_msg = truncate_to_tokens(f"{system_prompt}\nCurrent time: {datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')}", MAX_SYSTEM_TOKENS)
 
     realtime_context = ""
     doc = doc_session.pop(sender, None) or doc_session.pop(session_key, None)
     if doc:
-        realtime_context += f"\n[CURRENT DOCUMENT: {doc['name']}]\n{doc['text'][:5000]}...\n"
+        realtime_context += f"\n[CURRENT DOCUMENT: {doc['name']}]\n"
+        if doc.get("base64"):
+            # Auto-parse document and include extracted content
+            parsed = parse_document_with_nvidia(
+                document_base64=doc["base64"],
+                filename=doc["name"],
+                prompt="Extract all text, tables, and key information from this document."
+            )
+            if parsed.get("ok") and parsed.get("text"):
+                realtime_context += f"[PARSED DOCUMENT CONTENT: {parsed['text'][:3000]}]\n"
+            else:
+                # Fallback: include base64 for tool calling fallback
+                realtime_context += f"[DOCUMENT BASE64: {doc['base64']}]\n"
+                realtime_context += "[INSTRUCTION: A document is attached. Call parse_document tool with the base64 above to extract its content.]\n"
+        realtime_context += f"{doc['text'][:5000]}...\n"
 
     # If there is image/sticker data, ask the vision service to analyze and
     # append a short description to the user content so the LLM sees visual info.
@@ -1238,6 +1310,10 @@ def route_reply():
         if cfg("allow_status_reply") == False:
             return jsonify({"reply": ""}), 200
 
+        # Check if this user has opted out of status replies
+        if profile_mgr.get_ignore_status(user_phone):
+            return jsonify({"reply": ""}), 200
+
         # Use the contact's name if we know it
         contact_name = push_name or profile_mgr.get_profile(user_phone).get("name") or user_phone
 
@@ -1296,7 +1372,8 @@ def route_reply():
                 "• master control status_now\n"
                 "• master control wipe cache\n"
                 "• master control wipe memory\n"
-                "• master control config"
+                "• master control config\n"
+                "• master control ignore_status [on/off] - Toggle ignoring status updates from a user"
             )}), 200
 
         if not is_creator:
@@ -1476,6 +1553,17 @@ def route_reply():
 
         return jsonify({"reply": "⚠️ Unknown master control command."}), 200
 
+    # ── User Status Control Commands ────────────────────────────────────────────
+    # Allow users to opt in/out of status replies
+    lower_q = raw_question.lower().strip()
+    if lower_q in ("stop viewing my statuses", "stop viewing my status", "stop replying to my statuses", "stop replying to my status", "ignore my statuses", "ignore my status", "don't reply to my statuses", "don't reply to my status"):
+        profile_mgr.set_ignore_status(user_phone, True)
+        return jsonify({"reply": "👍 Got it. I'll stop replying to your status updates. Say 'resume viewing my statuses' when you want me to start again."}), 200
+
+    if lower_q in ("resume viewing my statuses", "resume viewing my status", "resume replying to my statuses", "resume replying to my status", "start replying to my statuses", "start replying to my status", "watch my statuses", "watch my status"):
+        profile_mgr.set_ignore_status(user_phone, False)
+        return jsonify({"reply": "👍 Back on it. I'll reply to your status updates again."}), 200
+
     # Handle pending numbered song picks safely & asynchronously.
     pending = None
     with _state_lock:
@@ -1530,6 +1618,26 @@ def route_reply():
     if command_reply:
         return jsonify(command_reply), 200
 
+    # ── Boundary Enforcement ──────────────────────────────────────────────────────
+    boundary_result = check_and_enforce(user_phone, raw_question)
+    if boundary_result:
+        return jsonify({"reply": boundary_result["message"]}), 200
+    
+    # ── Feedback Processing ────────────────────────────────────────────────────
+    feedback_result = process_feedback_message(raw_question, user_phone, {
+        "topic": None,  # Could extract from context
+        "interaction_type": "general",
+    })
+    
+    # ── Cross-Session Memory Linking ──────────────────────────────────────────
+    link_session_memory(user_phone, session_id, raw_question, {
+        "topic": None,  # Could extract from context
+    })
+    
+    # ── Proactive Follow-up Triggers ──────────────────────────────────────────
+    # Check if we should schedule a follow-up based on message content
+    # (This would be called after specific interactions like trades, songs, etc.)
+    
     # General bot reply.
     if raw_question:
         try:
@@ -1577,6 +1685,25 @@ def route_reply():
             # Format reply with @mention if replying to a specific user in group
             if is_group and quoted_author_jid and not is_bot_quoted_flag:
                 reply_text = format_reply_with_mentions(reply_text, quoted_author_jid, quoted_author)
+            
+            # ── Post-Reply Processing ───────────────────────────────────────────
+            # Record mood state for persistence
+            try:
+                from services.personality import get_session_mood
+                mood_state = get_session_mood(session_id)
+                if mood_state:
+                    # Mood already set in detect_mood via session_key
+                    pass
+            except Exception:
+                pass
+            
+            # Trigger auto-summarization if needed
+            maybe_summarize(session_id)
+            
+            # Schedule proactive follow-ups based on interaction type
+            # This could be expanded based on tools used in the reply
+            # e.g., if trade tools were used -> schedule post_trade followup
+            
             return jsonify({"reply": reply_text}), 200
         except Exception as exc:
             _notify_raw_error(exc, context=f"route_reply user={user_phone} sender={sender}", user_phone=user_phone)

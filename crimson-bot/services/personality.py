@@ -8,15 +8,88 @@ No censorship - pure human-like personality shifts.
 
 from __future__ import annotations
 
+import json
+import os
 import random
+import threading
 import time
 from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from core.config import TZ, cfg, log
+from core.config import BASE_DIR, TZ, cfg, log
 from services.memory import profile_mgr
 
+
+# ─── Persistent Mood State ────────────────────────────────────────────────────
+
+_MOOD_STATE_FILE = os.path.join(BASE_DIR, "mood_state.json")
+_mood_lock = threading.Lock()
+_mood_state: dict[str, dict] = {}  # session_key -> {mood, tone, intensity, updated_at}
+
+def _load_mood_state() -> None:
+    global _mood_state
+    if os.path.exists(_MOOD_STATE_FILE):
+        try:
+            with open(_MOOD_STATE_FILE, "r", encoding="utf-8") as f:
+                _mood_state = json.load(f)
+        except Exception:
+            _mood_state = {}
+
+def _save_mood_state() -> None:
+    with _mood_lock:
+        with open(_MOOD_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(_mood_state, f, ensure_ascii=False, indent=2)
+
+_load_mood_state()
+
+
+def get_session_mood(session_key: str) -> dict:
+    """Get current mood state for a session."""
+    with _mood_lock:
+        return dict(_mood_state.get(session_key, {}))
+
+
+def set_session_mood(session_key: str, mood: str, tone: str = None, intensity: float = 1.0) -> None:
+    """Set mood state for a session."""
+    with _mood_lock:
+        _mood_state[session_key] = {
+            "mood": mood,
+            "tone": tone,
+            "intensity": intensity,
+            "updated_at": time.time(),
+        }
+    _save_mood_state()
+
+
+def get_mood_influence(session_key: str, current_mood: Mood, decay_hours: float = 4.0) -> float:
+    """
+    Get influence of previous mood on current detection.
+    Returns 0-1 weight for how much previous mood should influence current.
+    """
+    state = get_session_mood(session_key)
+    if not state:
+        return 0.0
+    
+    # Check if mood is recent enough
+    age_hours = (time.time() - state.get("updated_at", 0)) / 3600
+    if age_hours > decay_hours:
+        return 0.0
+    
+    # Decay influence over time
+    try:
+        prev_mood = Mood(state["mood"])
+        if prev_mood == current_mood:
+            # Same mood reinforces
+            return 0.5 * (1 - age_hours / decay_hours)
+        else:
+            # Different mood - slight carryover
+            return 0.2 * (1 - age_hours / decay_hours)
+    except Exception:
+        return 0.0
+
+
+# ─── Mood & Tone Enums ───────────────────────────────────────────────────────
 
 class Mood(Enum):
     """Current mood state."""
@@ -48,41 +121,23 @@ class Tone(Enum):
 
 # Mood triggers and weights
 MOOD_TRIGGERS = {
-    Mood.HAPPY: {
-        "keywords": ["win", "profit", "green", "moon", "pump", "nice", "good", "awesome", "sick", "fire"],
-        "topics": ["trading", "man_city", "barca", "music"],
-        "time_ranges": [(18, 23)],  # Evening
-        "weight": 1.2
-    },
-    Mood.SARCASTIC: {
-        "keywords": ["obviously", "genius", "brilliant", "sure", "yeah right", "ok bud"],
-        "topics": ["stupid_questions", "obvious_things"],
+    Mood.CHILL: {
+        "keywords": ["hey", "hi", "sup", "yo", "chill", "relax", "cool", "nice", "ok", "k"],
+        "topics": ["casual", "general"],
         "time_ranges": [],
         "weight": 1.0
     },
-    Mood.TOUGH: {
-        "keywords": ["stop", "enough", "serious", "real talk", "listen"],
-        "topics": ["risk_management", "discipline", "losses"],
-        "time_ranges": [(9, 16)],  # Market hours
-        "weight": 1.1
+    Mood.HAPPY: {
+        "keywords": ["great", "awesome", "amazing", "love", "happy", "win", "profit", "green", "moon", "pump", "sick", "fire", "lit", "blessed"],
+        "topics": ["trading", "man_city", "barca", "music", "wins"],
+        "time_ranges": [(18, 23)],
+        "weight": 1.2
     },
-    Mood.SAVAGE: {
-        "keywords": ["stupid", "idiot", "dumb", "fool", "loser", "trash", "garbage", "roast", "clown"],
-        "topics": ["insults", "provocation"],
+    Mood.SARCASTIC: {
+        "keywords": ["obviously", "genius", "brilliant", "sure", "yeah right", "ok bud", "smart", "wow"],
+        "topics": ["stupid_questions", "obvious_things"],
         "time_ranges": [],
-        "weight": 2.0  # High weight - takes priority
-    },
-    Mood.PROTECTIVE: {
-        "keywords": ["creator", "elijah", "crimson", "dad", "chela", "charlene", "girlfriend"],
-        "topics": ["family", "creator"],
-        "time_ranges": [],
-        "weight": 1.5
-    },
-    Mood.TIRED: {
-        "keywords": [],
-        "topics": [],
-        "time_ranges": [(0, 6)],  # Late night
-        "weight": 1.3
+        "weight": 1.0
     },
     Mood.BANTER: {
         "keywords": ["inside joke", "remember when", "classic", "same", "mood", "lol", "haha", "jk", "just kidding"],
@@ -90,12 +145,36 @@ MOOD_TRIGGERS = {
         "time_ranges": [],
         "weight": 1.0
     },
+    Mood.TOUGH: {
+        "keywords": ["stop", "enough", "serious", "real talk", "listen", "focus", "discipline"],
+        "topics": ["risk_management", "discipline", "losses"],
+        "time_ranges": [(9, 16)],
+        "weight": 1.1
+    },
+    Mood.SAVAGE: {
+        "keywords": ["stupid", "idiot", "dumb", "fool", "loser", "trash", "garbage", "roast", "clown", "burn", "cook", "destroy", "end", "kill"],
+        "topics": ["insults", "provocation"],
+        "time_ranges": [],
+        "weight": 2.0
+    },
+    Mood.PROTECTIVE: {
+        "keywords": ["creator", "elijah", "crimson", "dad", "chela", "charlene", "girlfriend", "family"],
+        "topics": ["family", "creator"],
+        "time_ranges": [],
+        "weight": 1.5
+    },
+    Mood.TIRED: {
+        "keywords": [],
+        "topics": [],
+        "time_ranges": [(0, 6)],
+        "weight": 1.3
+    },
     Mood.HYPED: {
-        "keywords": ["let's go", "wild", "insane", "crazy", "massive", "huge"],
+        "keywords": ["let's go", "wild", "insane", "crazy", "massive", "huge", "insane", "nuts"],
         "topics": ["big_wins", "breaking_news"],
         "time_ranges": [],
         "weight": 1.0
-    }
+    },
 }
 
 
@@ -105,7 +184,6 @@ MOOD_TONES = {
     Mood.HAPPY: [Tone.WARM, Tone.HYPED, Tone.BANTER],
     Mood.SARCASTIC: [Tone.SARCASTIC, Tone.BANTER, Tone.BLUNT],
     Mood.BANTER: [Tone.BANTER, Tone.WARM, Tone.HYPED],
-    Mood.SARCASTIC: [Tone.SARCASTIC, Tone.BANTER, Tone.BLUNT],
     Mood.TOUGH: [Tone.BLUNT, Tone.TOUGH, Tone.DISMISSIVE],
     Mood.SAVAGE: [Tone.ROAST, Tone.SAVAGE, Tone.BLUNT],
     Mood.PROTECTIVE: [Tone.PROTECTIVE, Tone.WARM, Tone.BLUNT],
@@ -151,7 +229,7 @@ def get_relationship_level(user_id: str) -> Relationship:
     return Relationship.STRANGER
 
 
-def detect_mood(message: str, user_id: str, context: dict = None) -> Mood:
+def detect_mood(message: str, user_id: str, context: dict = None, session_key: str = None) -> Mood:
     """Detect appropriate mood from message and context."""
     context = context or {}
     msg_lower = message.lower()
@@ -192,8 +270,21 @@ def detect_mood(message: str, user_id: str, context: dict = None) -> Mood:
     elif rel == Relationship.STRANGER:
         scores[Mood.CHILL] = scores.get(Mood.CHILL, 0) + 1
     
+    # Persistent mood influence
+    if session_key:
+        for mood in scores:
+            influence = get_mood_influence(session_key, mood)
+            if influence > 0:
+                scores[mood] = scores.get(mood, 0) * (1 + influence)
+    
     # Return highest scoring mood
-    return max(scores, key=scores.get)
+    detected = max(scores, key=scores.get)
+    
+    # Update session mood state
+    if session_key:
+        set_session_mood(session_key, detected.value)
+    
+    return detected
 
 
 def select_tone(mood: Mood, relationship: Relationship) -> Tone:
@@ -219,10 +310,10 @@ def select_tone(mood: Mood, relationship: Relationship) -> Tone:
     return random.choice(available)
 
 
-def build_personality_prompt(user_id: str, message: str, context: dict = None) -> str:
+def build_personality_prompt(user_id: str, message: str, context: dict = None, session_key: str = None) -> str:
     """Build dynamic personality addition to system prompt."""
     context = context or {}
-    mood = detect_mood(message, user_id, context)
+    mood = detect_mood(message, user_id, context, session_key)
     relationship = get_relationship_level(user_id)
     tone = select_tone(mood, relationship)
     
@@ -231,6 +322,58 @@ def build_personality_prompt(user_id: str, message: str, context: dict = None) -
     facts = profile.get("facts", [])
     interests = profile.get("interests", [])
     count = profile.get("interaction_count", 0)
+    
+    # Persistent mood state
+    mood_state = get_session_mood(session_key) if session_key else {}
+    mood_intensity = mood_state.get("intensity", 1.0)
+    
+    # Mood descriptions
+    mood_desc = {
+        Mood.CHILL: "Relaxed, easygoing, unbothered",
+        Mood.HAPPY: "Upbeat, positive, buzzing",
+        Mood.SARCASTIC: "Dry wit, playful mockery, raised eyebrow",
+        Mood.BANTER: "Playful teasing, inside jokes, shared laughs",
+        Mood.TOUGH: "Blunt, no-nonsense, straight talk",
+        Mood.SAVAGE: "Zero filter, cutting, brutally honest",
+        Mood.PROTECTIVE: "Fiercely loyal, defensive of inner circle",
+        Mood.TIRED: "Low energy, can't be bothered, short",
+        Mood.HYPED: "High energy, hyped up, loud",
+    }
+    
+    # Tone instructions
+    tone_instructions = {
+        Tone.WARM: "Be genuinely warm and kind. Use their name naturally. Show you care.",
+        Tone.CHILL: "Stay relaxed and casual. Short replies. No big energy.",
+        Tone.BANTER: "Playful teasing. Light roasts. Inside jokes. Keep it fun.",
+        Tone.BLUNT: "Direct and honest. No fluff. Call it like it is. No sugarcoating.",
+        Tone.ROAST: "Savage mode. Cut deep but clever. No mercy. Funny not cruel.",
+        Tone.PROTECTIVE: "Fiercely loyal. Defend your people. Don't let anyone disrespect them.",
+        Tone.DISMISSIVE: "Short. Unimpressed. 'K.' 'Sure.' 'Whatever.' Minimal effort.",
+        Tone.HYPED: "High energy! Caps lock worthy. Exclamation points! Let's GO!",
+        Tone.SARCASTIC: "Dry wit. Raised eyebrow. Mock the obvious. Clever not cruel.",
+        Tone.TOUGH: "Hard. No-nonsense. Straight talk. Zero patience for BS.",
+        Tone.SAVAGE: "Zero filter. Brutal honesty. Cut deep. No mercy. Dark humor welcome.",
+    }
+    
+    # Relationship context
+    rel_context = {
+        Relationship.STRANGER: "You don't know them yet. Be polite but guarded.",
+        Relationship.ACQUAINTANCE: f"You've chatted {count} times. Know basics.",
+        Relationship.FRIEND: f"Regular. Know them ({name}). {len(facts)} facts, interests: {', '.join(interests[:3]) if interests else 'none'}.",
+        Relationship.CLOSE_FRIEND: f"Deep history. Inside jokes exist. {name} is your person. {len(facts)} facts known.",
+        Relationship.CREATOR: "THIS IS ELIJAH. YOUR CREATOR. YOUR DAD. Respect. Loyalty. Never roast unless he asks. Protective instinct MAX.",
+        Relationship.PARTNER: "THIS IS CHARLENE (CHELA). YOUR GIRLFRIEND. Warm. Soft. Protective. Never savage.",
+    }
+    
+    profile = profile_mgr.get_profile(user_id)
+    name = profile.get("name") or "mate"
+    facts = profile.get("facts", [])
+    interests = profile.get("interests", [])
+    count = profile.get("interaction_count", 0)
+    
+    # Persistent mood state
+    mood_state = get_session_mood(session_key) if session_key else {}
+    mood_intensity = mood_state.get("intensity", 1.0)
     
     # Mood descriptions
     mood_desc = {
@@ -273,10 +416,11 @@ def build_personality_prompt(user_id: str, message: str, context: dict = None) -
     parts = [
         f"\n[PERSONALITY STATE]",
         f"Current mood: {mood.value.upper()} — {mood_desc[mood]}",
+        f"Mood intensity: {mood_intensity:.1f}x",
         f"Tone: {tone.value.upper()} — {tone_instructions[tone]}",
         f"Relationship: {relationship.name} — {rel_context[relationship]}",
         f"Known facts: {facts[-3:] if facts else 'none'}",
-        f"Interests: {interests[:3] if interests else 'none'}",
+        f"Interests: {', '.join(interests[:3]) if interests else 'none'}",
         f"Interaction #{count + 1}",
     ]
     

@@ -13,6 +13,7 @@ working unchanged.
 from __future__ import annotations
 
 import os
+import random
 import threading
 import time
 
@@ -53,22 +54,44 @@ def _build_status_prompt(topics: list[str]) -> str:
 
 def run_status_post_cycle() -> dict:
     """Single cycle: build prompt, call LLM with tools (uses post_status).
-
+    
     Used as the action.fn of the recurring status-posting task. Returns a
-    summary dict for the dispatcher to log."""
+    summary dict for the dispatcher to log.
+    
+    Only posts ~40% of the time (2 out of 5), picking moments when there's
+    something genuinely interesting to share.
+    """
+    import random
+    
+    # Only post ~40% of the time (2 out of 5)
+    if random.random() > 0.4:
+        log.info("[Scheduler] Skipping status post this cycle (selective posting)")
+        return {"posted": False, "reason": "selective_skip"}
+
     from core.llm import call_llm
     from services.tools import ALL_TOOLS, execute_tool_calls
     import services.vision as vision_svc
 
     topics = cfg("status_scheduler_topics") or []
     prompt = _build_status_prompt(topics)
+    
+    # Add selectivity instruction to prompt
+    selectivity_prompt = (
+        f"{prompt}\n\n"
+        "IMPORTANT: You are being selective. Only post if you have something genuinely "
+        "interesting, timely, or emotionally resonant to share. If nothing feels "
+        "authentic right now, you can choose to skip by responding with exactly "
+        "'SKIP_POST' and nothing else. Don't force it."
+    )
+    
     messages = [
         {
             "role": "system",
             "content": (
                 "You are Crimsonej. Post an authentic, engaging WhatsApp status update. "
                 "Use web_search if you need live data, then call post_status to publish. "
-                "DO NOT just describe what you'll do — actually call the tools."
+                "DO NOT just describe what you'll do — actually call the tools. "
+                "If you genuinely have nothing interesting to say, respond with exactly 'SKIP_POST'."
             ),
         },
         {"role": "user", "content": prompt},
@@ -81,6 +104,12 @@ def run_status_post_cycle() -> dict:
     reply = call_llm(messages, tools=ALL_TOOLS, tool_executor_fn=_tool_exec,
                      user_id="scheduler", sender_jid="scheduler")
     reply_text = reply.get("reply", "") if isinstance(reply, dict) else str(reply)
+    
+    # Check if LLM chose to skip
+    if reply_text.strip() == "SKIP_POST":
+        log.info("[Scheduler] LLM chose to skip status post")
+        return {"posted": False, "reason": "llm_skip"}
+
     event_log.append("scheduler", "status_posted",
                      summary=f"status cycle reply={reply_text[:80]!r}",
                      payload={"topics": topics, "reply": reply_text[:300]})

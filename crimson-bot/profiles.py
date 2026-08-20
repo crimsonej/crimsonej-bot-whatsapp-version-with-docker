@@ -62,6 +62,7 @@ class ProfileManager:
                 "last_seen": None,
                 "first_seen": datetime.now().isoformat(),
                 "is_creator": False,
+                "ignore_status": False,  # If True, bot won't reply to this user's status updates
             }
         return self.profiles[user_id]
 
@@ -138,6 +139,17 @@ class ProfileManager:
         profile = self.get_profile(user_id)
         profile["relationship"] = relationship
         self.save()
+
+    def set_ignore_status(self, user_id: str, ignore: bool):
+        """Set whether to ignore status updates from this user."""
+        profile = self.get_profile(user_id)
+        profile["ignore_status"] = ignore
+        self.save()
+
+    def get_ignore_status(self, user_id: str) -> bool:
+        """Check if user's status updates should be ignored."""
+        profile = self.get_profile(user_id)
+        return profile.get("ignore_status", False)
 
     def get_context_string(self, user_id: str) -> str:
         """
