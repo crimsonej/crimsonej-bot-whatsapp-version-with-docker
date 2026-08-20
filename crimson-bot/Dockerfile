@@ -41,7 +41,9 @@ WORKDIR /data
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-EXPOSE 5000
+# NOTE: no EXPOSE here. Railway routes to the injected $PORT; a static
+# EXPOSE (e.g. 5000) makes Railway proxy to that port while the app
+# listens on $PORT, breaking health checks.
 
 # Two-process note:
 #   bot.py's __main__ boots several background threads (dispatcher,
