@@ -10,4 +10,6 @@ Pillow
 tiktoken
 PyPDF2
 python-docx
+matplotlib
+yfinance
 

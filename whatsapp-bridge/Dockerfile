@@ -59,9 +59,14 @@ COPY whatsapp-bridge/package-lock.json /opt/build/package-lock.json
 RUN npm ci --omit=dev --no-audit --no-fund \
     || npm install --omit=dev --no-audit --no-fund
 
-# Stage bridge source onto /data alongside the persistent auth dir
-COPY whatsapp-bridge/ /opt/bridge-src/
-RUN cp -a /opt/bridge-src/. /data/ && rm -rf /opt/bridge-src
+# Stage bridge source onto /data alongside the persistent auth dir.
+# The repo contains a committed node_modules/ which is stale and broken
+# (missing ESM dist files, e.g. lru-cache). Copy source files only, then
+# install a fresh node_modules from the build stage.
+WORKDIR /opt/bridge-src
+COPY whatsapp-bridge/*.js whatsapp-bridge/*.json whatsapp-bridge/*.py whatsapp-bridge/*.md whatsapp-bridge/.env.example /opt/bridge-src/
+RUN cp -a /opt/bridge-src/. /data/ && rm -rf /opt/bridge-src \
+    && cp -a /opt/build/node_modules /data/node_modules
 
 WORKDIR /data
 
