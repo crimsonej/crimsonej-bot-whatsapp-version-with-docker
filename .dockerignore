@@ -1,0 +1,55 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local logs and pids
+*.log
+*.pid
+bot.log
+bridge.log
+.bot.pid
+.bridge.pid
+
+# Local secrets — Render injects these from env vars
+.env
+.env.local
+*.key
+*.pem
+
+# Cached runtime state (regenerated at boot)
+cache.json
+vectors.json
+sessions.json
+doc_sessions.json
+user_profiles.json
+memory_links.json
+mood_state.json
+boundaries_state.json
+data/
+group_vaults/
+vaults/
+
+# WhatsApp Baileys auth — Render Persistent Disk handles this at /data
+auth_info_baileys/
+
+# Build artifacts
+dist/
+build/
+*.tmp
+temp/
+tmp/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore

@@ -1,0 +1,71 @@
+# infra/render.yaml — Render Blueprint for Crimsonej
+#
+# Two services, each with its own Persistent Disk.
+#
+# IMPORTANT — Free tier caveats:
+#   * Free web services sleep after 15 min of no HTTP traffic.
+#   * The bridge depends on a persistent outbound WebSocket to WhatsApp.
+#     When Render spins the bridge down, the Baileys session drops and
+#     you'll need to re-scan the QR on next wake.
+#   * Persistent Disk is only available on Starter ($7/mo) and above.
+#     On the free plan this disk block will FAIL to apply — you'll see
+#     "disk not allowed on this plan". Read render-deploy.md before
+#     continuing.
+#   * WhatsApp bans cloud IP connections frequently. Have a backup
+#     phone number ready.
+#
+# Before you click "Apply":
+#   1. Create the GitHub repo and push this code (Render pulls from Git).
+#   2. In the Render Dashboard → New → Blueprint → point at the repo.
+#   3. Render will detect infra/render.yaml and show a diff.
+#   4. You fill in the secret values (NVIDIA_API_KEY, etc.) in the
+#      dashboard; do NOT put them in this file.
+
+services:
+  - type: web
+    name: crimson-bot
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./crimson-bot/Dockerfile
+    dockerContext: .
+    plan: free           # change to "starter" if you want Persistent Disk
+    region: oregon
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: BOT_PORT
+        value: "10000"
+      - key: NVIDIA_API_KEY
+        sync: false       # set in Render Dashboard as a secret
+      - key: GROQ_API_KEY
+        sync: false
+      - key: HF_API_KEY
+        sync: false
+      - key: CREATOR_PHONE
+        sync: false
+      - key: MODEL
+        value: meta/llama-3.3-70b-instruct
+
+  - type: web
+    name: whatsapp-bridge
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./whatsapp-bridge/Dockerfile
+    dockerContext: .
+    plan: free           # MUST be "starter" or above for disk; free = no disk
+    region: oregon
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "7860"
+      - key: AI_SERVER
+        value: http://crimson-bot:10000/reply
+        # NOTE: on Render this internal hostname does NOT resolve.
+        # Replace with the public URL Render gives crimson-bot, e.g.
+        #   value: https://crimson-bot-xxxx.onrender.com/reply
+        # See render-deploy.md "Step 4: Wire bridge to bot".
+      - key: BOT_NAME
+        value: crimsonej
+      - key: AUTH_DIR
+        value: /data/auth_info_baileys
