@@ -51,5 +51,6 @@ ENV PYTHONUNBUFFERED=1 \
 #   dev server. For Render, we run it directly with python so the
 #   background services start. gunicorn would also work but is not
 #   strictly required for a single-process bot.
-# Render/Railway inject $PORT. BOT_PORT (if set) wins, then $PORT, else 5000.
-CMD ["sh", "-c", "BOT_PORT=${BOT_PORT:-${PORT:-5000}} python bot.py server 2>&1"]
+# Railway/Render inject $PORT and route traffic to it — it MUST win.
+# Local dev: PORT unset, BOT_PORT or 5000 used as fallback.
+CMD ["sh", "-c", "BOT_PORT=${PORT:-${BOT_PORT:-5000}} python bot.py server 2>&1"]
