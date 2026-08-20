@@ -5,4 +5,9 @@ duckduckgo-search
 ddgs
 gunicorn
 yt-dlp
+openai
+Pillow
+tiktoken
+PyPDF2
+python-docx
 
