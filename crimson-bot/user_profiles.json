@@ -1,12 +1,13 @@
 {
   "250203957407887": {
     "phone": "250203957407887",
-    "name": "⠀",
+    "name": "Elijah",
     "nicknames": [
-      "Joa",
       "crimson",
       "crimson-test",
-      "Alex"
+      "Alex",
+      "⠀",
+      "Admin"
     ],
     "facts": [
       "favorite artist is Kendrick Lamar",
@@ -17,21 +18,23 @@
     ],
     "relationship": null,
     "preferences": {},
-    "interaction_count": 115,
-    "last_seen": "2026-08-19T10:06:12.832787",
+    "interaction_count": 125,
+    "last_seen": "2026-08-20T03:32:32.750854",
     "first_seen": "2026-08-16T19:04:46.731606",
     "is_creator": true
   },
   "21106022990028": {
     "phone": "21106022990028",
-    "name": "John Reigns",
-    "nicknames": [],
+    "name": "John",
+    "nicknames": [
+      "John Reigns"
+    ],
     "facts": [],
     "interests": [],
     "relationship": null,
     "preferences": {},
-    "interaction_count": 19,
-    "last_seen": "2026-08-19T09:21:25.502585",
+    "interaction_count": 60,
+    "last_seen": "2026-08-20T03:37:15.616037",
     "first_seen": "2026-08-16T19:12:13.332779",
     "is_creator": false
   },
@@ -46,6 +49,58 @@
     "interaction_count": 1,
     "last_seen": "2026-08-19T08:20:01.442181",
     "first_seen": "2026-08-19T08:20:01.441221",
+    "is_creator": false
+  },
+  "user@s.whatsapp.net": {
+    "phone": "user@s.whatsapp.net",
+    "name": null,
+    "nicknames": [],
+    "facts": [],
+    "interests": [],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 0,
+    "last_seen": null,
+    "first_seen": "2026-08-20T02:17:05.613495",
+    "is_creator": false
+  },
+  "admin@s.whatsapp.net": {
+    "phone": "admin@s.whatsapp.net",
+    "name": null,
+    "nicknames": [],
+    "facts": [],
+    "interests": [],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 0,
+    "last_seen": null,
+    "first_seen": "2026-08-20T02:43:35.538196",
+    "is_creator": false
+  },
+  "bot@s.whatsapp.net": {
+    "phone": "bot@s.whatsapp.net",
+    "name": null,
+    "nicknames": [],
+    "facts": [],
+    "interests": [],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 0,
+    "last_seen": null,
+    "first_seen": "2026-08-20T02:43:35.544741",
+    "is_creator": false
+  },
+  "newuser@s.whatsapp.net": {
+    "phone": "newuser@s.whatsapp.net",
+    "name": null,
+    "nicknames": [],
+    "facts": [],
+    "interests": [],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 0,
+    "last_seen": null,
+    "first_seen": "2026-08-20T02:43:35.547910",
     "is_creator": false
   }
 }

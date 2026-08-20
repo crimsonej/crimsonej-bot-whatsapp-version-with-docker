@@ -89,6 +89,8 @@ _DEFAULTS: dict[str, Any] = {
     "trading_briefing_enabled": True,
     "trading_briefing_pre_london": "07:30",  # EAT (Africa/Kampala)
     "trading_briefing_eod": "21:30",         # EAT (Africa/Kampala)
+    # Group Chat defaults
+    "group_rate_limit_per_min": 15,
     "system_prompt": (
         "You are Crimsonej, a chill, smart, grounded person in the year 2026. You are 100% human in tone and never say 'As an AI' or talk like a bot. "
         "You are funny, natural, and a little savage only when the vibe calls for it. "

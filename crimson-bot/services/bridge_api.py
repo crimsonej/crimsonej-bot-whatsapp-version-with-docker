@@ -67,3 +67,25 @@ def bridge_edit(jid: str, message_id: str, new_text: str, *, timeout: int = 6) -
 def bridge_delete(jid: str, message_id: str, *, timeout: int = 6) -> dict[str, Any]:
     """Delete a message by id. Idempotent within WhatsApp's 24h window."""
     return _post("/delete_message", {"jid": jid, "message_id": message_id}, timeout=timeout)
+
+
+def bridge_get_group_admins(group_jid: str, *, timeout: int = 10) -> dict[str, Any]:
+    """
+    Fetch group admin list from bridge.
+    Returns {ok: True, admins: [jid1, jid2, ...]} or {ok: False, error}.
+    
+    Note: Requires bridge support for /group_admins endpoint.
+    """
+    try:
+        r = requests.post(f"{BRIDGE_BASE}/group_admins", json={"jid": group_jid}, timeout=timeout)
+        if r.headers.get("content-type", "").startswith("application/json"):
+            data = r.json()
+        else:
+            data = {"ok": r.status_code == 200, "raw": r.text}
+        return data if isinstance(data, dict) else {"ok": False, "error": "bad_payload"}
+    except requests.exceptions.Timeout:
+        log.warning("[bridge_api] group_admins timed out after %ss", timeout)
+        return {"ok": False, "error": "timeout"}
+    except Exception as exc:
+        log.warning("[bridge_api] group_admins failed: %s", exc)
+        return {"ok": False, "error": str(exc)}

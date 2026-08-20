@@ -45,6 +45,44 @@ import services.media as media_svc
 import services.bridge_api as bridge_api
 from services.scheduler import start_scheduler, stop_scheduler, restart_scheduler, trigger_now
 from services.trading import MAX_BRIEFING_TOPICS
+from services.group_intel import (
+    is_mentioned,
+    is_group_admin,
+    update_group_admins,
+    get_group_context,
+    update_group_context,
+    learn_group_topic,
+    get_group_vibe,
+    check_group_rate_limit,
+    increment_group_messages,
+    handle_group_join,
+    handle_group_leave,
+    get_group_session_key,
+    build_group_system_prompt_addition,
+    check_command_permissions,
+    init_group_intel,
+    is_bot_quoted,
+    build_thread_context,
+    extract_mentions_from_text,
+    format_reply_with_mentions,
+    get_group_vault_context,
+    learn_group_fact,
+    get_group_vault_raw,
+    clear_group_vault,
+    detect_other_bot_mentions,
+    should_respond_in_multi_bot_context,
+)
+
+from services.personality import (
+    detect_mood,
+    get_relationship_level,
+    select_tone,
+    should_roast,
+    build_personality_prompt,
+    Mood,
+    Tone,
+    Relationship,
+)
 
 # ── Flask App Setup ──────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -72,8 +110,6 @@ _state_lock = threading.Lock()
 # simple in-memory dedupe for raw error notifications: fingerprint -> last_sent_ts
 _error_notify_cache: dict[str, float] = {}
 _ERROR_NOTIFY_DEDUPE_SEC = 300
-
-ROAST_PROMPT = """You are only in roast mode when the user is rude, insulting, provoking, or explicitly asks for a roast. Otherwise stay warm, chill, and casual. Keep roasts short, sharp, and only when warranted. Never roast a normal greeting like 'yo', 'hi', or 'sup'."""
 
 TALK_REQUEST_RE = re.compile(
     r'talk to him|respond to that|reply to him|roast him|roast that|talk to this|roast her|clown him|clown her|destroy him|cook him|end him|burn him',
@@ -222,11 +258,6 @@ class Index:
 index = Index()
 
 # ── Helper Functions ─────────────────────────────────────────────────────────
-def is_roast_request(message: str, quoted: str = "") -> bool:
-    msg_lower = (message + " " + quoted).lower()
-    keywords = ['stupid', 'idiot', 'dumb', 'fool', 'loser', 'roast', 'clown', 'burn', 'cook']
-    return any(k in msg_lower for k in keywords)
-
 def is_talk_request(message: str) -> bool:
     return bool(TALK_REQUEST_RE.search(message))
 
@@ -424,7 +455,7 @@ def _sticker_reply_from_visual(image_b64: str, user_phone: str, sender: str) -> 
 
     return {"reply": f"I saw it: {desc}\nCouldn't generate the sticker reply rn."}
 
-def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted: str = "") -> dict | None:
+def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted: str = "", is_group: bool = False) -> dict | None:
     lower = raw_question.lower()
     if lower in ("/help", "help") or lower.startswith("/help "):
         help_text = (
@@ -433,9 +464,9 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
             "📄 */read [prompt]* - Summarize or query an attached/quoted document (.pdf, .docx, .txt)\n"
             "🧠 */learn [text/doc]* - Store document or text in permanent long-term memory\n"
             
-            "🎨 */imagine <prompt>* - Generate AI image (NVIDIA Flux 2 / HF Schnell)\n"
+            "🎨 */imagine <prompt>* - Generate image (NVIDIA Flux 2 / HF Schnell)\n"
             # image-edit removed
-            "✨ */sticker [prompt]* - Generate AI sticker or convert media to WebP sticker\n"
+            "✨ */sticker [prompt]* - Generate sticker or convert media to WebP sticker\n"
             "📸 */reg-img [prompt]* - Analyze image using NVIDIA VLM vision intelligence\n"
             "🎵 */song-audio <name/link>* - Search and download audio track\n"
             "🎬 */song-video <name/link>* - Search and download video track\n"
@@ -462,6 +493,10 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
             "• `master control topic add/remove/clear/list` - Manage status topic list\n"
             "• `master control status_now` - Trigger immediate status post\n"
             "• `master control config` - View active Master Control configuration\n\n"
+            "🏠 *Group Commands:*\n"
+            "• `/group_fact <text>` - Store a fact in group memory (group only)\n"
+            "• `/group_facts` - View group memory vault (group only)\n"
+            "• `/group_forget` - Clear group memory (creator only)\n\n"
             "🖥️ *Terminal CLI Commands:*\n"
             "• `crimsonej start | stop | status | logs | setup | reindex`\n\n"
             "👤 *Creator:* Crimson (Elijah)"
@@ -642,6 +677,36 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
             lines.append(f"  {s['group_jid'].split('@')[0]} — {', '.join(s['sessions'])} — {topics}")
         return {"reply": "\n".join(lines)}
 
+    # Group fact commands
+    if lower.startswith("/group_facts"):
+        if not is_group:
+            return {"reply": "This command only works in groups."}
+        vault = get_group_vault_raw(session_id)
+        if not vault.strip():
+            return {"reply": "Group memory vault is empty."}
+        return {"reply": f"📚 **Group Memory Vault:**\n\n{vault}"}
+
+    if lower.startswith("/group_fact"):
+        if not is_group:
+            return {"reply": "This command only works in groups."}
+        parts = raw_question.split(maxsplit=1)
+        if len(parts) < 2:
+            return {"reply": "Usage: `/group_fact This group loves SOL`"}
+        fact = parts[1].strip()
+        learn_group_fact(session_id, fact, f"user:{user_phone}")
+        return {"reply": "✅ Saved to group memory vault."}
+
+    if lower.startswith("/group_forget"):
+        if not is_group:
+            return {"reply": "This command only works in groups."}
+        profile = profile_mgr.get_profile(user_phone)
+        if not profile.get("is_creator"):
+            return {"reply": "🔒 Creator only command."}
+        cleared = clear_group_vault(session_id)
+        if cleared:
+            return {"reply": "🧹 Group memory vault cleared."}
+        return {"reply": "Failed to clear vault."}
+
     if lower.startswith("/brief"):
         parts = raw_question.split()
         session = parts[1].lower() if len(parts) >= 2 else "pre_london"
@@ -792,70 +857,18 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
             res = add_trade_journal(user_phone, trade)
             return {"reply": f"Trade logged: {symbol} {side.upper()} @ {entry} — {result_trade.upper()} ({r_multiple}R)"}
         return {"reply": "Subcommand must be 'log' or 'stats'"}
-
-    # ── Briefing Subscriptions ──────────────────────────────────────────────────
-    if lower.startswith("/briefing_subscribe") or lower.startswith("/brief_sub"):
-        parts = raw_question.split()
-        if len(parts) < 2:
-            return {"reply": (
-                "Usage: `/briefing_subscribe [pre_london|eod|both] [BTC ETH EURUSD GOLD ...]`\n"
-                "Examples:\n"
-                "  `/briefing_subscribe both BTC ETH EURUSD` — both sessions, 3 pairs\n"
-                "  `/briefing_subscribe pre_london BTC GOLD` — pre-London only\n"
-                f"Max {MAX_BRIEFING_TOPICS} topics. Use `/briefing_unsubscribe` to stop."
-            )}
-        # Parse: first arg could be session or topic
-        valid_sessions = {"pre_london", "eod", "both"}
-        sessions = []
-        topics = []
-        for p in parts[1:]:
-            pl = p.lower()
-            if pl in valid_sessions:
-                if pl == "both":
-                    sessions = ["pre_london", "eod"]
-                else:
-                    sessions.append(pl)
-            else:
-                topics.append(p.upper())
-        if not sessions:
-            sessions = ["pre_london", "eod"]
-        # Only allow in groups
-        if not is_group:
-            return {"reply": "This command only works in groups. Add me to a group and run it there."}
-        group_jid = sender  # sender is the group JID in group chats
-        from services.trading import subscribe_group
-        res = subscribe_group(group_jid, user_phone, sessions, topics)
-        if res["ok"]:
-            sub = res["subscription"]
-            sess_str = ", ".join(sub["sessions"])
-            topic_str = ", ".join(sub["topics"]) if sub["topics"] else "all major pairs"
-            return {"reply": f"✅ Subscribed this group to {sess_str} briefing with: {topic_str}"}
-        return {"reply": f"Failed: {res.get('message', 'unknown error')}"}
-
-    if lower.startswith("/briefing_unsubscribe") or lower.startswith("/brief_unsub"):
-        if not is_group:
-            return {"reply": "Run this in the group you want to unsubscribe."}
-        group_jid = sender
-        from services.trading import unsubscribe_group
-        res = unsubscribe_group(group_jid)
-        return {"reply": res["message"]}
-
-    if lower.startswith("/briefing_list") or lower.startswith("/brief_list"):
-        from services.trading import list_subscriptions
-        subs = list_subscriptions()
-        if not subs:
-            return {"reply": "No active group subscriptions."}
-        lines = ["📋 **Active Briefing Subscriptions:**"]
-        for s in subs:
-            topics = ", ".join(s["topics"]) if s["topics"] else "all major"
-            lines.append(f"  {s['group_jid'].split('@')[0]} — {', '.join(s['sessions'])} — {topics}")
-        return {"reply": "\n".join(lines)}
-
+    
     return None
 
 def answer(question: str, sender: str = "cli", user_phone: str | None = None,
-           is_roast: bool = False, bot_ids: list[str] = None,
+           bot_ids: list[str] = None,
            is_group: bool = False, session_key: str | None = None, visual_b64: str | None = None,
+           is_admin: bool = False,
+           quoted_text: str = "",
+           quoted_author: str = "",
+           quoted_author_jid: str = "",
+           is_bot_quoted: bool = False,
+           thread_context: str = "",
            *, message_id: str | None = None) -> dict | str:
     if any(phrase == question.lower().strip() for phrase in IDENTITY_PHRASES):
         return IDENTITY_REPLY
@@ -880,10 +893,18 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
     s_key = session_key or sender
     session = sessions.get(s_key)
 
+    # Dynamic personality system
+    is_roast_flag = should_roast(question, user_id, quoted_text)
+    personality_context = {
+        "is_group": is_group,
+        "quoted": bool(quoted_text),
+        "topic": None,
+    }
     system_prompt = (
         " [SITUATIONAL AWARENESS: You are Crimsonej. Respond naturally and helpfully.]\n\n"
     )
-    system_prompt += ROAST_PROMPT if is_roast else cfg("system_prompt")
+    system_prompt += cfg("system_prompt")
+    system_prompt += build_personality_prompt(user_id, question, personality_context)
 
     # ── Per-user profile context (name, facts, interests, familiarity) ────────
     user_context = profile_mgr.get_context_string(user_id)
@@ -896,14 +917,16 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
     # ── Group awareness: tell the bot who is talking vs the group ─────────────
     if is_group:
         speaker_name = profile_mgr.get_profile(user_id).get('name') or user_id
-        system_prompt += (
-            f"\n[GROUP CHAT: You are in a group conversation. "
-            f"The person messaging you right now is {speaker_name}. "
-            f"You know their name but do NOT use it in every reply — that's weird and robotic. "
-            f"Use names only when it's natural, like greeting someone new or calling someone out. "
-            f"Talk like a real person in a group chat. "
-            f"To tag/mention someone, use @phone_number format.]\n"
+        # Use rich group context from group_intel with thread awareness
+        system_prompt += build_group_system_prompt_addition(
+            sender, speaker_name, sender, is_admin,
+            quoted_text=quoted_text,
+            quoted_author=quoted_author_jid or quoted_author,
+            quoted_author_name=quoted_author,
+            is_bot_quoted_flag=is_bot_quoted
         )
+        # Add group vault context
+        system_prompt += get_group_vault_context(sender)
 
     system_prompt += get_vault_context(user_id)
     system_msg = truncate_to_tokens(f"{system_prompt}\nCurrent time: {datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')}", MAX_SYSTEM_TOKENS)
@@ -1015,6 +1038,7 @@ def route_reply():
     raw_question = (body.get("message") or body.get("text") or body.get("msg") or body.get("content") or "").strip()
     quoted = (body.get("quoted_message") or body.get("quoted") or "").strip()
     quoted_author = (body.get("quoted_author") or "").strip()
+    quoted_author_jid = (body.get("quoted_author_jid") or body.get("quoted_sender") or "").strip()
     # JID of the user who sent the message (used for session and message-id mapping)
     sender_jid = (body.get('sender') or 'unknown').strip()
     # Phone number digits for profile lookup etc.
@@ -1032,6 +1056,75 @@ def route_reply():
     is_group = bool(body.get("group_name"))
 
     log.info("← sender=%s name=%s | msg=%r", sender, push_name or '?', raw_question[:80])
+
+    # Bot JID/phone for mention detection (defined early for group join/leave events)
+    bot_jid = cfg("owner_jid") or ""
+    bot_phone = "".join(ch for ch in bot_jid if ch.isdigit()) if bot_jid else ""
+
+# ── Group Intelligence ───────────────────────────────────────────────────────
+    if is_group:
+        group_jid = session_id  # group_name is the group JID
+        increment_group_messages(group_jid)
+        
+        # Learn group topic passively
+        learn_group_topic(group_jid, raw_question, push_name or user_phone)
+        
+        # Check rate limit
+        allowed, rate_info = check_group_rate_limit(group_jid, max_per_minute=int(cfg("group_rate_limit_per_min") or 15))
+        if not allowed:
+            log.info("[Group] Rate limited group=%s count=%d", group_jid, rate_info["count"])
+            return jsonify({"reply": ""}), 200
+        
+        # Check if bot is mentioned (required for group replies unless it's a command)
+        mentioned = is_mentioned(raw_question, bot_jid, bot_phone)
+        is_command = raw_question.startswith("/")
+        is_group_event = body.get("group_join") or body.get("group_leave")
+        has_thread_context = bool(body.get("quoted_message") or body.get("quoted") or body.get("quoted_author_jid") or body.get("quoted_sender"))
+        
+        if not is_group_event and not mentioned and not is_command and not has_thread_context and not body.get("edited") and not body.get("deleted"):
+            # Silently ignore non-mentions in groups (but not group events or thread replies)
+            log.debug("[Group] Ignoring non-mention in group=%s", group_jid)
+            return jsonify({"reply": ""}), 200
+        
+        # Multi-bot conflict avoidance: check if someone is addressing another bot
+        should_respond, skip_reason = should_respond_in_multi_bot_context(raw_question, bot_jid, bot_phone, True)
+        if not should_respond:
+            log.debug("[Group] Skipping response - %s", skip_reason)
+            return jsonify({"reply": ""}), 200
+        
+        # Check admin status for command permissions
+        is_admin = is_group_admin(group_jid, sender_jid)
+        
+        # Update admin list if bridge provides it
+        if body.get("group_admins"):
+            update_group_admins(group_jid, body["group_admins"])
+        
+        # Update group name if provided
+        if body.get("group_name_str"):
+            update_group_context(group_jid, name=body["group_name_str"])
+        
+        # Build group-aware session key
+        session_id = get_group_session_key(group_jid, sender_jid)
+        
+        # Check if replying to bot's message
+        is_bot_quoted_flag = is_bot_quoted(quoted_author_jid, bot_jid, bot_phone)
+        # Also check quoted_author name
+        if not is_bot_quoted_flag and quoted_author:
+            is_bot_quoted_flag = is_bot_quoted(quoted_author, bot_jid, bot_phone)
+        
+        # Build thread context for system prompt
+        thread_context = ""
+        if quoted and (quoted_author or quoted_author_jid):
+            thread_context = build_thread_context(quoted, quoted_author_jid or quoted_author, quoted_author)
+    else:
+        group_jid = None
+        is_admin = False
+        is_bot_quoted_flag = False
+        thread_context = ""
+
+    # Pass thread context to answer via session_key or global
+    # We'll store it temporarily for the answer call
+    thread_context_store = {"context": thread_context, "is_bot_quoted": is_bot_quoted_flag}
 
 # ── /read & /learn document handling ─────────────────────────────────────
     doc_b64 = body.get("document_data") or ""
@@ -1117,6 +1210,22 @@ def route_reply():
             return jsonify({"reply": ""}), 200
         except Exception as exc:
             log.warning("[Delete] cleanup failed: %s", exc)
+            return jsonify({"reply": ""}), 200
+
+    # ── Group Join/Leave Events ────────────────────────────────────────────────
+    if body.get("group_join") or body.get("group_leave"):
+        is_join = body.get("group_join", False)
+        event_group_jid = body.get("group_jid") or session_id
+        event_user_jid = body.get("user_jid") or sender_jid
+        event_user_name = body.get("user_name") or push_name or user_phone
+        is_bot = event_user_jid == bot_jid
+        
+        if is_join:
+            welcome = handle_group_join(event_group_jid, event_user_jid, event_user_name, is_bot)
+            if welcome:
+                return jsonify({"reply": welcome}), 200
+        else:
+            handle_group_leave(event_group_jid, event_user_jid, event_user_name)
             return jsonify({"reply": ""}), 200
 
     # ── Auto-learn contact name & bump interaction count ──────────────────────
@@ -1411,27 +1520,45 @@ def route_reply():
                 return jsonify({"reply": f"on it 🎬 (task #{t['id']})" if mtype == "video" else f"on it 🎵 (task #{t['id']})"}), 200
         return jsonify({"reply": "That option isn’t valid. Try a number from the list."}), 200
 
-    # Regular slash commands.
-    command_reply = handle_commands(raw_question, user_phone, session_id, quoted)
+    # Regular slash commands - check permissions first
+    if raw_question.startswith("/"):
+        allowed, error_msg = check_command_permissions(raw_question, user_phone, group_jid if is_group else None, is_group)
+        if not allowed:
+            return jsonify({"reply": error_msg}), 200
+    
+    command_reply = handle_commands(raw_question, user_phone, session_id, quoted, is_group)
     if command_reply:
         return jsonify(command_reply), 200
 
     # General bot reply.
     if raw_question:
         try:
+            # Get thread context from store
+            tc = thread_context_store if 'thread_context_store' in locals() else {"context": "", "is_bot_quoted": False}
+            is_bot_quoted_flag = tc.get("is_bot_quoted", False)
             model_reply = answer(
                 raw_question,
                 sender=sender,
                 user_phone=user_phone,
-                is_roast=is_roast_request(raw_question, quoted),
                 bot_ids=[],
                 is_group=is_group,
                 session_key=session_id,
                 visual_b64=visual_b64,
+                is_admin=is_admin,
+                quoted_text=quoted,
+                quoted_author=quoted_author,
+                quoted_author_jid=quoted_author_jid,
+                is_bot_quoted=is_bot_quoted_flag,
+                thread_context=tc.get("context", ""),
                 message_id=body.get("message_id") or body.get("mid"),
             )
             if isinstance(model_reply, dict):
-                reply_payload = {"reply": model_reply.get("reply", "")}
+                reply_text = model_reply.get("reply", "")
+                # Format reply with @mention if replying to a specific user in group
+                if is_group and quoted_author_jid and not is_bot_quoted_flag:
+                    # Replying to another user, @mention them
+                    reply_text = format_reply_with_mentions(reply_text, quoted_author_jid, quoted_author)
+                reply_payload = {"reply": reply_text}
                 if model_reply.get("image"):
                     reply_payload["image"] = model_reply["image"]
                 if model_reply.get("sticker"):
@@ -1446,7 +1573,11 @@ def route_reply():
                 return jsonify(reply_payload), 200
             if body.get("edited") and edit_replace_message_id:
                 return jsonify({"reply": _sanitize_assistant_reply(str(model_reply)), "edit_mode": True, "replace_message_id": edit_replace_message_id}), 200
-            return jsonify({"reply": _sanitize_assistant_reply(str(model_reply))}), 200
+            reply_text = _sanitize_assistant_reply(str(model_reply))
+            # Format reply with @mention if replying to a specific user in group
+            if is_group and quoted_author_jid and not is_bot_quoted_flag:
+                reply_text = format_reply_with_mentions(reply_text, quoted_author_jid, quoted_author)
+            return jsonify({"reply": reply_text}), 200
         except Exception as exc:
             _notify_raw_error(exc, context=f"route_reply user={user_phone} sender={sender}", user_phone=user_phone)
             return jsonify({"reply": "I hit a snag on my end — give me a sec and I’ll sort it."}), 200
@@ -1603,4 +1734,8 @@ if __name__ == "__main__":
         start_briefing_scheduler()
     except Exception as e:
         log.warning("[Boot] Failed to start trading briefing scheduler: %s", e)
+    try:
+        init_group_intel()
+    except Exception as e:
+        log.warning("[Boot] Failed to init group intel: %s", e)
     app.run(host="0.0.0.0", port=cfg("port"), threaded=True)

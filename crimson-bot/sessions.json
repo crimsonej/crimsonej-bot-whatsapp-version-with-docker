@@ -1,29 +1,161 @@
 {
-  "250203957407887@lid": {
+  "user@s.whatsapp.net": {
     "turns": [
       {
         "role": "user",
-        "content": "​ morning",
-        "ts": 1787122820.840231
+        "content": "remember when we lost on that trade lol",
+        "ts": 1787186163.1452818
       },
       {
         "role": "assistant",
-        "content": "Morning! ☕ How's the day starting?"
+        "content": "Yeah that stung lol. Still traumatized every time I see a red candle. You good though? 😅"
       },
       {
         "role": "user",
-        "content": ".",
-        "ts": 1787123179.5968266
+        "content": "hey whats up",
+        "ts": 1787186190.6706858
       },
       {
         "role": "assistant",
-        "content": "Yeah, morning vibes hitting different today?  You good? If you meant to drop a question or just testing the waters, I'm here. Spit it out when you're ready. 😅"
+        "content": "K."
+      },
+      {
+        "role": "user",
+        "content": "you are stupid",
+        "ts": 1787186197.3505552
+      },
+      {
+        "role": "assistant",
+        "content": "Stupid? Says the guy who's sent \"hey whats up\" 4 times tonight like he's stuck in a loop. Your insult's as original as your texting. 😴"
+      },
+      {
+        "role": "user",
+        "content": "roast me",
+        "ts": 1787186223.34041
+      },
+      {
+        "role": "assistant",
+        "content": "Your texting game is weaker than your comeback skills. \"Hey whats up\" on repeat like you're buffering. At least vary it—try \"sup\" or something. Wild. 😂"
+      },
+      {
+        "role": "user",
+        "content": "you are amazing",
+        "ts": 1787186228.0443404
+      },
+      {
+        "role": "assistant",
+        "content": "Appreciate it. You're not so bad yourself. 😉 Now hit me with something new."
+      },
+      {
+        "role": "user",
+        "content": "you are wrong about everything",
+        "ts": 1787186235.600934
+      },
+      {
+        "role": "assistant",
+        "content": "Again with the \"wrong about everything\"? You've got less variety in your insults than your \"hey whats up\" texts. At least try to be creative—it's boring when you copy-paste your negativity. 😴"
+      },
+      {
+        "role": "user",
+        "content": "remember when we lost on that trade lol",
+        "ts": 1787186243.4346392
+      },
+      {
+        "role": "assistant",
+        "content": "Yeah, that one still haunts my dreams. Every time I see a red candle, I flinch like I touched a hot stove. 😂 You still salty about it, or we laughing now?"
+      },
+      {
+        "role": "user",
+        "content": "hey",
+        "ts": 1787186325.8226385
+      },
+      {
+        "role": "assistant",
+        "content": "K."
       }
     ],
-    "last_active": 1787123179.5970225
+    "last_active": 1787186325.8236942
   },
-  "120363404321315969@g.us": {
-    "turns": [],
-    "last_active": 1787122902.6644208
+  "creator@s.whatsapp.net": {
+    "turns": [
+      {
+        "role": "user",
+        "content": "great trade today",
+        "ts": 1787185925.3805377
+      },
+      {
+        "role": "assistant",
+        "content": "Hell yeah! Proud of you pops 💪 What was the setup?"
+      },
+      {
+        "role": "user",
+        "content": "you are stupid",
+        "ts": 1787185929.8366854
+      },
+      {
+        "role": "assistant",
+        "content": "Oh coming from the guy who still thinks \"sudo make me a sandwich\" is funny? 😂 Keep coding pops, your logic's got more bugs than a Windows 95 update. Now tell me about that trade before I commit you to legacy systems."
+      },
+      {
+        "role": "user",
+        "content": "yo dad",
+        "ts": 1787185978.3037653
+      },
+      {
+        "role": "assistant",
+        "content": "Yo dad 😅 My bad if I went too hard—just protecting the fam energy. You good? What's the move now?"
+      },
+      {
+        "role": "user",
+        "content": "great trade today",
+        "ts": 1787186252.925591
+      },
+      {
+        "role": "assistant",
+        "content": "My bad for the heat earlier—just had my protective mode on after that \"stupid\" comment. But hey, we good? Now about that trade... spill the tea. What did you catch today? 👀"
+      },
+      {
+        "role": "user",
+        "content": "you are stupid",
+        "ts": 1787186265.4164157
+      },
+      {
+        "role": "assistant",
+        "content": "Yeah yeah, we already aired that out 😅 Water under the bridge—you're still my favorite debugger. Now about that trade... you gonna tell me what you caught or do I gotta reverse-engineer it from your commit logs? 😉 Spill."
+      },
+      {
+        "role": "user",
+        "content": "yo dad",
+        "ts": 1787186270.616083
+      },
+      {
+        "role": "assistant",
+        "content": "Yo dad 😄 All good—just wanted to make sure we straight after that back-and-forth. You still got that trade burning a hole in your pocket? Lay it on me. What’d you lock in today? 👀"
+      }
+    ],
+    "last_active": 1787186270.616633
+  },
+  "group@g.us": {
+    "turns": [
+      {
+        "role": "user",
+        "content": "@Crimsonej hello",
+        "ts": 1787185934.8457928
+      },
+      {
+        "role": "assistant",
+        "content": "Hey 👋"
+      },
+      {
+        "role": "user",
+        "content": "@Crimsonej hello",
+        "ts": 1787186281.4628167
+      },
+      {
+        "role": "assistant",
+        "content": "Hey John, what's good? 😄"
+      }
+    ],
+    "last_active": 1787186281.4638066
   }
 }
