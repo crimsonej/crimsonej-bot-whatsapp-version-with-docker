@@ -52,4 +52,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 #   dev server. For Render, we run it directly with python so the
 #   background services start. gunicorn would also work but is not
 #   strictly required for a single-process bot.
-CMD ["sh", "-c", "python bot.py server 2>&1"]
+# Render/Railway inject $PORT. BOT_PORT (if set) wins, then $PORT, else 5000.
+CMD ["sh", "-c", "BOT_PORT=${BOT_PORT:-${PORT:-5000}} python bot.py server 2>&1"]
