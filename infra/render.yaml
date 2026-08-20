@@ -28,13 +28,13 @@ services:
     rootDir: .
     dockerfilePath: ./crimson-bot/Dockerfile
     dockerContext: .
-    plan: free           # change to "starter" if you want Persistent Disk
+    plan: free
     region: oregon
     healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: BOT_PORT
-        value: "10000"
+        value: "5000"
       - key: NVIDIA_API_KEY
         sync: false       # set in Render Dashboard as a secret
       - key: GROQ_API_KEY
@@ -60,7 +60,7 @@ services:
       - key: PORT
         value: "7860"
       - key: AI_SERVER
-        value: http://crimson-bot:10000/reply
+        value: http://crimson-bot:5000/reply
         # NOTE: on Render this internal hostname does NOT resolve.
         # Replace with the public URL Render gives crimson-bot, e.g.
         #   value: https://crimson-bot-xxxx.onrender.com/reply
