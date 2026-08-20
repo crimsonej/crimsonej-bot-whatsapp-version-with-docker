@@ -1,0 +1,25 @@
+{
+  "250203957407887@lid": {
+    "turns": [
+      {
+        "role": "user",
+        "content": "hey yo sup",
+        "ts": 1787236106.7663832
+      },
+      {
+        "role": "assistant",
+        "content": "hey! sup? 😎"
+      },
+      {
+        "role": "user",
+        "content": "bro",
+        "ts": 1787236323.8064418
+      },
+      {
+        "role": "assistant",
+        "content": "what's good, bro? 🔥"
+      }
+    ],
+    "last_active": 1787236323.8073516
+  }
+}
