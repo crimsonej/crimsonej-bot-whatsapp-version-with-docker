@@ -77,8 +77,4 @@ ENV NODE_ENV=production \
 
 EXPOSE 7860
 
-# Health check on the simple HTTP / route the bridge already serves.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:7860/ || exit 1
-
 CMD ["node", "bridge.js"]

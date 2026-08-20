@@ -35,16 +35,13 @@ RUN cp -a /opt/bot-src/. /data/ && rm -rf /opt/bot-src
 
 WORKDIR /data
 
-# Render sets $PORT. We honor it via BOT_PORT, which config.py reads.
-ENV BOT_PORT=5000 \
-    PYTHONUNBUFFERED=1 \
+# Railway injects $PORT (e.g. 8080) and routes traffic to it.
+# BOT_PORT (if explicitly set in dashboard) wins, then $PORT, else 5000.
+# NOTE: no ENV BOT_PORT here — it would shadow the $PORT fallback.
+ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 5000
-
-# Health check uses the Flask /health route already defined in bot.py.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:5000/health || exit 1
 
 # Two-process note:
 #   bot.py's __main__ boots several background threads (dispatcher,
