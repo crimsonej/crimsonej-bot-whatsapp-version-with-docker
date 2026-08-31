@@ -904,13 +904,6 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
            is_bot_quoted: bool = False,
            thread_context: str = "",
            *, message_id: str | None = None) -> dict | str:
-    if any(phrase == question.lower().strip() for phrase in IDENTITY_PHRASES):
-        return IDENTITY_REPLY
-
-    name_clean = re.sub(r'[^aA-zZ0-9]', '', question.lower())
-    if name_clean in {"crimsonej", "crimson"}:
-        return random.choice(["Yeah? What's up? 😎", "I'm here, what do you need?", "Yo!", "Sup?"])
-
     user_id = user_phone or sender
     profile = profile_mgr.get_profile(user_id)
     is_creator = profile.get("is_creator", False) if profile else False
@@ -951,7 +944,6 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
     # ── Group awareness: tell the bot who is talking vs the group ─────────────
     if is_group:
         speaker_name = profile_mgr.get_profile(user_id).get('name') or user_id
-        # Use rich group context from group_intel with thread awareness
         system_prompt += build_group_system_prompt_addition(
             sender, speaker_name, sender, is_admin,
             quoted_text=quoted_text,
@@ -959,21 +951,39 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
             quoted_author_name=quoted_author,
             is_bot_quoted_flag=is_bot_quoted
         )
-        # Add group vault context
-        system_prompt += get_group_vault_context(sender)
+        group_vault = get_group_vault_context(sender)
+        if group_vault:
+            system_prompt += group_vault
 
-    system_prompt += get_vault_context(user_id)
+    user_vault = get_vault_context(user_id)
+    if user_vault:
+        system_prompt += user_vault
     
-    # ── Cross-session memory links ──────────────────────────────────────────────
-    system_prompt += get_cross_session_context(user_id)
+    # ── Cross-session & summary memory ──────────────────────────────────────────
+    cross_session = get_cross_session_context(user_id)
+    if cross_session:
+        system_prompt += cross_session
     
-    # ── Conversation summary ───────────────────────────────────────────────────
-    system_prompt += get_summary_context(session_key)
+    summary_ctx = get_summary_context(session_key)
+    if summary_ctx:
+        system_prompt += summary_ctx
     
-    # ── Events & Market Context ────────────────────────────────────────────────
-    system_prompt += get_event_context()
-    system_prompt += get_market_context()
-    system_prompt += get_personal_event_context(user_id)
+    # ── Dynamic Market & Event Context (Selective based on question) ──────────
+    q_lower = question.lower()
+    is_market_query = any(k in q_lower for k in ("btc", "eth", "sol", "gold", "forex", "trade", "chart", "market", "price", "analysis", "stock", "crypto"))
+    if is_market_query:
+        mkt_ctx = get_market_context()
+        if mkt_ctx:
+            system_prompt += mkt_ctx
+            
+    is_event_query = any(k in q_lower for k in ("event", "calendar", "news", "fomc", "nfp", "meeting", "schedule", "reminder", "today"))
+    if is_event_query:
+        evt_ctx = get_event_context()
+        if evt_ctx:
+            system_prompt += evt_ctx
+        p_evt_ctx = get_personal_event_context(user_id)
+        if p_evt_ctx:
+            system_prompt += p_evt_ctx
     
     # ── Feedback Adaptation ────────────────────────────────────────────────────
     adaptation_hint = get_adaptation_hint(user_id)

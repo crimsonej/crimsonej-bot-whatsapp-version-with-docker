@@ -365,54 +365,15 @@ def build_personality_prompt(user_id: str, message: str, context: dict = None, s
         Relationship.PARTNER: "THIS IS CHARLENE (CHELA). YOUR GIRLFRIEND. Warm. Soft. Protective. Never savage.",
     }
     
-    profile = profile_mgr.get_profile(user_id)
-    name = profile.get("name") or "mate"
-    facts = profile.get("facts", [])
-    interests = profile.get("interests", [])
-    count = profile.get("interaction_count", 0)
-    
-    # Persistent mood state
-    mood_state = get_session_mood(session_key) if session_key else {}
-    mood_intensity = mood_state.get("intensity", 1.0)
-    
-    # Mood descriptions
-    mood_desc = {
-        Mood.CHILL: "Relaxed, easygoing, unbothered",
-        Mood.HAPPY: "Upbeat, positive, buzzing",
-        Mood.SARCASTIC: "Dry wit, playful mockery, raised eyebrow",
-        Mood.BANTER: "Playful teasing, inside jokes, shared laughs",
-        Mood.TOUGH: "Blunt, no-nonsense, straight talk",
-        Mood.SAVAGE: "Zero filter, cutting, brutally honest",
-        Mood.PROTECTIVE: "Fiercely loyal, defensive of inner circle",
-        Mood.TIRED: "Low energy, can't be bothered, short",
-        Mood.HYPED: "High energy, hyped up, loud",
-    }
-    
-    # Tone instructions
-    tone_instructions = {
-        Tone.WARM: "Be genuinely warm and kind. Use their name naturally. Show you care.",
-        Tone.CHILL: "Stay relaxed and casual. Short replies. No big energy.",
-        Tone.BANTER: "Playful teasing. Light roasts. Inside jokes. Keep it fun.",
-        Tone.BLUNT: "Direct and honest. No fluff. Call it like it is. No sugarcoating.",
-        Tone.ROAST: "Savage mode. Cut deep but clever. No mercy. Funny not cruel.",
-        Tone.PROTECTIVE: "Fiercely loyal. Defend your people. Don't let anyone disrespect them.",
-        Tone.DISMISSIVE: "Short. Unimpressed. 'K.' 'Sure.' 'Whatever.' Minimal effort.",
-        Tone.HYPED: "High energy! Caps lock worthy. Exclamation points! Let's GO!",
-        Tone.SARCASTIC: "Dry wit. Raised eyebrow. Mock the obvious. Clever not cruel.",
-        Tone.TOUGH: "Hard. No-nonsense. Straight talk. Zero patience for BS.",
-        Tone.SAVAGE: "Zero filter. Brutal honesty. Cut deep. No mercy. Dark humor welcome.",
-    }
-    
-    # Relationship context
-    rel_context = {
-        Relationship.STRANGER: "You don't know them yet. Be polite but guarded.",
-        Relationship.ACQUAINTANCE: f"You've chatted {count} times. Know basics.",
-        Relationship.FRIEND: f"Regular. Know them ({name}). {len(facts)} facts, interests: {', '.join(interests[:3]) if interests else 'none'}.",
-        Relationship.CLOSE_FRIEND: f"Deep history. Inside jokes exist. {name} is your person. {len(facts)} facts known.",
-        Relationship.CREATOR: "THIS IS ELIJAH. YOUR CREATOR. YOUR DAD. Respect. Loyalty. Never roast unless he asks. Protective instinct MAX.",
-        Relationship.PARTNER: "THIS IS CHARLENE (CHELA). YOUR GIRLFRIEND. Warm. Soft. Protective. Never savage.",
-    }
-    
+    # Anti-AI robotic formatting enforcement
+    formatting_rules = (
+        "CRITICAL FORMATTING RULES FOR HUMAN FEEL:\n"
+        "- NEVER use bullet points (•, -, *), numbered lists (1. 2. 3.), or markdown tables.\n"
+        "- NEVER use robotic corporate intros ('As an AI...', 'Sure thing! I can help you with that', 'Here is what you need').\n"
+        "- Write casually and directly like a real person typing on WhatsApp.\n"
+        "- Keep paragraphs short and conversational."
+    )
+
     parts = [
         f"\n[PERSONALITY STATE]",
         f"Current mood: {mood.value.upper()} — {mood_desc[mood]}",
@@ -422,15 +383,16 @@ def build_personality_prompt(user_id: str, message: str, context: dict = None, s
         f"Known facts: {facts[-3:] if facts else 'none'}",
         f"Interests: {', '.join(interests[:3]) if interests else 'none'}",
         f"Interaction #{count + 1}",
+        formatting_rules,
     ]
     
     # Context additions
     if context.get("is_group"):
-        parts.append("GROUP SETTING: Adjust for audience. Don't be weird.")
+        parts.append("GROUP SETTING: Adjust for audience naturally.")
     if context.get("quoted"):
-        parts.append("REPLYING TO QUOTE: Acknowledge naturally.")
+        parts.append("REPLYING TO QUOTE: Acknowledge directly.")
     if context.get("topic"):
-        parts.append(f"TOPIC: {context['topic']} — lean into it.")
+        parts.append(f"TOPIC: {context['topic']}")
     
     now = datetime.now(TZ).strftime("%H:%M")
     parts.append(f"TIME: {now} (EAT)")

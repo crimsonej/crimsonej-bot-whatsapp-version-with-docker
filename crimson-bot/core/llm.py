@@ -138,10 +138,10 @@ def call_llm(messages: list[dict[str, str]], tools: list | None = None, tool_exe
                 # use it directly without calling scout for synthesis.
                 if tool_results.get("reply"):
                     return tool_results
-                # Otherwise, do final synthesis via 8B scout
-                final = _call_nvidia(messages, tools=None, model=NVIDIA_SCOUT, max_tokens=1024, timeout=15.0)
+                # Otherwise, do final synthesis using the primary 70B model to preserve high quality and tone consistency
+                final = _call_nvidia(messages, tools=None, model=primary_model, max_tokens=768, timeout=20.0)
                 content = final.choices[0].message.content or ""
-                return {"reply": _strip_think(content), **tool_results}
+                return {"reply": _strip_think(_sanitize_tool_reply(content)), **tool_results}
 
             content = brain_msg.content or ""
             cleaned = _sanitize_tool_reply(content)

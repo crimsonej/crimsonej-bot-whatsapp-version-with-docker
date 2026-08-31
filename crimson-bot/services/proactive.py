@@ -149,8 +149,25 @@ def schedule_followup(user_id: str, trigger_type: str, context: dict = None, del
 
 
 def send_proactive_message(user_id: str, jid: str, message: str, trigger_type: str) -> dict:
-    """Send a proactive message via bridge."""
+    """Send a proactive message via bridge with dynamic LLM natural variation."""
     try:
+        # Try dynamic fast LLM call for natural human variation
+        try:
+            from core.llm import scout_quick_call
+            profile = profile_mgr.get_profile(user_id)
+            name = profile.get("name") or "friend"
+            prompt = [
+                {"role": "system", "content": "You are Crimsonej. Generate a short, natural 1-sentence WhatsApp message to check in with a friend. No AI fluff, no bullet points, casual tone."},
+                {"role": "user", "content": f"Friend's name: {name}. Topic context: {trigger_type}. Seed idea: '{message}'. Make it sound like a quick natural WhatsApp message."}
+            ]
+            res = scout_quick_call(prompt, max_tokens=60, timeout=3.0)
+            if res and res.get("reply"):
+                gen = res["reply"].strip().replace('"', '')
+                if gen:
+                    message = gen
+        except Exception as llm_exc:
+            log.debug("[Proactive] LLM synthesis fallback to template: %s", llm_exc)
+
         r = bridge_api.bridge_send(jid, message)
         if r.get("ok"):
             event_log.append("proactive", "sent", 
