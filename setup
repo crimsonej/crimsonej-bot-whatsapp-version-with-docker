@@ -84,12 +84,12 @@ def fetch_models(nv_key: str, groq_key: str) -> list[tuple[str, str]]:
         except Exception as e:
             print(f" ❌ ({e})")
 
-    # ── Sort: recommended models first ───────────────────────────────────────
+    # ── Sort: recommended models first (working free-tier models only) ─────────
     _PRIORITY = [
-        "meta/llama-3.3-70b-instruct",
-        "meta/llama-3.1-8b-instruct",
-        "nvidia/llama-3.1-nemotron-70b-instruct",
+        "meta/llama-3.2-90b-vision-instruct",
+        "nv-mistralai/mistral-nemo-12b-instruct",
         "mistralai/mistral-large-2-instruct",
+        "mistralai/mistral-large",
         "llama-3.3-70b-versatile",
     ]
     def sort_key(item):
@@ -115,7 +115,7 @@ def main():
         hf_key = os.getenv("HF_API_KEY", "")
         bot_port = os.getenv("BOT_PORT", "5000")
         creator_phone = os.getenv("CREATOR_PHONE", "")
-        active_model = os.getenv("MODEL", "meta/llama-3.3-70b-instruct")
+        active_model = os.getenv("MODEL", "meta/llama-3.2-90b-vision-instruct")
     else:
         print_header("API Keys Configuration")
         nv_key = prompt_input("NVIDIA API Key (Preferred for LLM, Vision, TTS & Flux 2)", os.getenv("NVIDIA_API_KEY", ""))
@@ -171,7 +171,7 @@ def main():
             print(f"\n  ✅ Selected: \033[1;32m{active_model}\033[0m")
         else:
             print("  ⚠️  Could not fetch models from any provider.")
-            active_model = prompt_input("Enter model ID manually", "meta/llama-3.3-70b-instruct")
+            active_model = prompt_input("Enter model ID manually", "meta/llama-3.2-90b-vision-instruct")
 
         print_header("Network & Identity")
         bot_port = prompt_input("Python Bot Port", "5000")
@@ -199,6 +199,18 @@ def main():
 
     # 3. Update crimson-bot/config.json
     cfg_path = os.path.join(BOT_DIR, "config.json")
+
+    # Determine provider of the selected model and build a sensible fallback chain.
+    # The models array must always use working, non-deprecated model IDs.
+    _is_groq = groq_key and ("versatile" in active_model or "groq" in active_model.lower())
+    selected_provider = "groq" if _is_groq else "nvidia"
+
+    # Scout fallback: use mistral-nemo for NVIDIA primary, groq versatile for Groq primary
+    if selected_provider == "nvidia":
+        scout_model = {"id": "nv-mistralai/mistral-nemo-12b-instruct", "provider": "nvidia", "tier": "scout"}
+    else:
+        scout_model = {"id": "meta/llama-3.2-90b-vision-instruct", "provider": "nvidia", "tier": "scout"}
+
     cfg_data = {
         "providers": {
             "nvidia": nv_key,
@@ -206,8 +218,8 @@ def main():
             "huggingface": hf_key
         },
         "models": [
-            {"id": "meta/llama-3.3-70b-instruct", "provider": "nvidia", "tier": "primary"},
-            {"id": "meta/llama-3.1-8b-instruct", "provider": "nvidia", "tier": "scout"},
+            {"id": active_model, "provider": selected_provider, "tier": "primary"},
+            scout_model,
             {"id": "llama-3.3-70b-versatile", "provider": "groq", "tier": "fallback"}
         ],
         "active_model": active_model,
