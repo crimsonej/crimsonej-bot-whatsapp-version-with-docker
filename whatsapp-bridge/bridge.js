@@ -34,6 +34,7 @@ const BOT_NAME  = process.env.BOT_NAME  || 'crimsonej';
 const AUTH_DIR  = process.env.AUTH_DIR  || (fs.existsSync('/data') ? '/data/auth_info_baileys' : 'auth_info_baileys');
 
 let sock = null;
+let reconnectCount = 0;
 const seenContacts = new Set();
 
 // ── Self-awareness observability ─────────────────────────────────────────────
@@ -161,6 +162,11 @@ async function startBot() {
                 : (lastDisconnect?.error?.data?.code || null);
             const loggedOut = code === DisconnectReason.loggedOut;
             console.log(`[BRIDGE] Closed – code ${code} | loggedOut: ${loggedOut}`);
+
+            // Clean up old socket listeners to prevent listener leaks & zombie sockets
+            try { sock?.ws?.terminate(); } catch (_) {}
+            try { sock?.ev?.removeAllListeners(); } catch (_) {}
+
             // Detect TLS EPROTO failures and auto-fallback if repeated
             const errCode = lastDisconnect?.error?.data?.code || lastDisconnect?.error?.data?.errno || '';
             const errMsg = lastDisconnect?.error?.message || '';
@@ -171,8 +177,6 @@ async function startBot() {
                     console.warn('[BRIDGE] Reached EPROTO threshold — disabling TLS certificate validation (debug)');
                     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
                     try { https.globalAgent.options.rejectUnauthorized = false; } catch (_) {}
-                    // restart connection with insecure TLS
-                    try { sock.ws?.terminate?.(); } catch (_) {}
                     setTimeout(startBot, 2000);
                     return;
                 }
@@ -186,10 +190,17 @@ async function startBot() {
                 }
                 setTimeout(() => process.exit(1), 1000);
             } else {
-                console.log('[BRIDGE] Reconnecting in 5s...');
-                setTimeout(startBot, 5000);
+                reconnectCount++;
+                if (reconnectCount > 5) {
+                    console.warn('[BRIDGE] Exceeded maximum reconnect attempts (5). Restarting bridge process for clean socket state...');
+                    setTimeout(() => process.exit(1), 1000);
+                } else {
+                    console.log(`[BRIDGE] Reconnecting in 5s (attempt ${reconnectCount}/5)...`);
+                    setTimeout(startBot, 5000);
+                }
             }
         } else if (connection === 'open') {
+            reconnectCount = 0;
             const botId  = sock.user?.id || '';
             const botNum = botId.split(':')[0].split('@')[0];
             console.log(`[BRIDGE] Ready! Bot number: ${botNum}`);
@@ -944,27 +955,28 @@ let text = m.conversation
             sock.sendPresenceUpdate('composing', from).catch(() => {});
         }, 10000); // Refresh every 10s
 
-        const res = await axios.post(AI_SERVER, {
-            message:        text || '[media]',
-            quoted_message: quotedText || null,
-            reply_to_quoted: replyToQuoted,
-            image_data:     imageData,
-            image_base64:   imageData,
-            sender:         from,
-            user_phone:     userPhone,
-            push_name:      pushName,
-            group_name:     isGroup ? from : null,
-            bot_id:         botNum,
-            bot_lid:        botLid
-        }, { timeout: 120000 });
-        
-        console.log('[BRIDGE] AI response status:', res.status, 'keys:', Object.keys(res.data || {}));
-        
-        clearInterval(typingInterval);
-        await sendAIResponse(msg, from, res, quotedFake, quotedSender);
-    } catch (e) {
-        console.error('[BRIDGE] AI error:', e.message, e.code || '', e.response?.status || '');
-    }
+        try {
+            const res = await axios.post(AI_SERVER, {
+                message:        text || '[media]',
+                quoted_message: quotedText || null,
+                reply_to_quoted: replyToQuoted,
+                image_data:     imageData,
+                image_base64:   imageData,
+                sender:         from,
+                user_phone:     userPhone,
+                push_name:      pushName,
+                group_name:     isGroup ? from : null,
+                bot_id:         botNum,
+                bot_lid:        botLid
+            }, { timeout: 120000 });
+            
+            console.log('[BRIDGE] AI response status:', res.status, 'keys:', Object.keys(res.data || {}));
+            await sendAIResponse(msg, from, res, quotedFake, quotedSender);
+        } catch (e) {
+            console.error('[BRIDGE] AI error:', e.message, e.code || '', e.response?.status || '');
+        } finally {
+            clearInterval(typingInterval);
+        }
 }
 
 // ─── AI Response Dispatcher ──────────────────────────────────────────────────

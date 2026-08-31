@@ -1858,6 +1858,11 @@ if __name__ == "__main__":
     except Exception:
         pass
     try:
+        from services.media import update_ytdlp_async
+        update_ytdlp_async()
+    except Exception:
+        pass
+    try:
         from services.health import start_heartbeat
         start_heartbeat()
     except Exception:
@@ -1875,4 +1880,12 @@ if __name__ == "__main__":
         init_group_intel()
     except Exception as e:
         log.warning("[Boot] Failed to init group intel: %s", e)
-    app.run(host="0.0.0.0", port=cfg("port"), threaded=True)
+        
+    port = int(os.environ.get("BOT_PORT") or cfg("port") or 5000)
+    log.info("[Boot] Starting Crimsonej AI Server on port %d...", port)
+    while True:
+        try:
+            app.run(host="0.0.0.0", port=port, threaded=True)
+        except Exception as e:
+            log.error("[Boot] Server exception: %s — restarting in 2s...", e)
+            time.sleep(2)

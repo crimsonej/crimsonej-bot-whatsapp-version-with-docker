@@ -11,7 +11,9 @@ import os
 import random
 import re
 import subprocess
+import sys
 import tempfile
+import threading
 import time
 import requests
 
@@ -19,6 +21,22 @@ from core.config import log
 
 LAST_DL_ERROR = "No downloads attempted yet"
 CF_WORKER_URL = os.environ.get("CF_WORKER_URL", "")
+
+def update_ytdlp_async() -> None:
+    """Run yt-dlp update in a background thread on startup to ensure YouTube format compatibility."""
+    def _update():
+        try:
+            log.info("[Media] Checking yt-dlp updates...")
+            res = subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"], capture_output=True, text=True, timeout=90)
+            if res.returncode == 0:
+                log.info("[Media] yt-dlp update check completed successfully.")
+            else:
+                log.debug("[Media] yt-dlp update check result: %s", res.stderr[:150])
+        except Exception as e:
+            log.debug("[Media] yt-dlp update check exception: %s", e)
+
+    t = threading.Thread(target=_update, name="YtDlpUpdater", daemon=True)
+    t.start()
 
 INVIDIOUS_INSTANCES = [
     "https://yewtu.eu",

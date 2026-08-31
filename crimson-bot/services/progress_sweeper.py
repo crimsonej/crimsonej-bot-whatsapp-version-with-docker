@@ -21,12 +21,40 @@ _sweeper_thread: threading.Thread | None = None
 _sweeper_stop = threading.Event()
 
 
+def _clean_temp_media_files() -> None:
+    """Clean up temporary media files older than 1 hour in /tmp and /dev/shm."""
+    import os
+    now = time.time()
+    max_age_sec = 3600  # 1 hour
+    prefixes = ("song_", "orig_", "stk_", "whatsapp_", "tmp_")
+    dirs_to_clean = ["/tmp", "/dev/shm"]
+
+    for d in dirs_to_clean:
+        if not os.path.exists(d):
+            continue
+        try:
+            for f in os.listdir(d):
+                if any(f.startswith(p) for p in prefixes) or f.endswith(("_whatsapp.mp4", "_whatsapp.ogg", "_aac.mp4")):
+                    filepath = os.path.join(d, f)
+                    try:
+                        if os.path.isfile(filepath):
+                            mtime = os.path.getmtime(filepath)
+                            if now - mtime > max_age_sec:
+                                os.remove(filepath)
+                                log.info("[Sweeper] Removed stale temp media: %s", filepath)
+                    except Exception:
+                        pass
+        except Exception as e:
+            log.debug("[Sweeper] Temp cleanup error for %s: %s", d, e)
+
+
 def _sweep_loop():
     interval = int(cfg("progress_sweeper_interval_sec") or 60)
     stale_secs = int(cfg("progress_stale_seconds") or 3600)
     log.info("[Sweeper] started; interval=%ds stale_secs=%ds", interval, stale_secs)
     while not _sweeper_stop.is_set():
         try:
+            _clean_temp_media_files()
             now = time.time()
             running = task_store.list(status="running", limit=200)
             for t in running:

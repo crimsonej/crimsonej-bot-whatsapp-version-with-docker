@@ -94,7 +94,34 @@ def start_services(foreground: bool = False) -> None:
         signal.signal(signal.SIGTERM, _handle_signal)
         try:
             while True:
-                time.sleep(1)
+                time.sleep(3)
+                # Check Python AI Server process
+                if not get_pid(BOT_PID_FILE):
+                    print("\033[1;31m[Orchestrator] Python AI Server stopped! Respawning...\033[0m")
+                    bot_log = open(BOT_LOG_FILE, "a")
+                    bot_proc = subprocess.Popen(
+                        [python_bin, "bot.py", "server"],
+                        cwd=BOT_DIR,
+                        stdout=bot_log,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True
+                    )
+                    with open(BOT_PID_FILE, "w") as f:
+                        f.write(str(bot_proc.pid))
+
+                # Check Node.js WhatsApp Bridge process
+                if not get_pid(BRIDGE_PID_FILE):
+                    print("\033[1;31m[Orchestrator] WhatsApp Bridge stopped! Respawning...\033[0m")
+                    bridge_log = open(BRIDGE_LOG_FILE, "a")
+                    bridge_proc = subprocess.Popen(
+                        ["node", "bridge.js"],
+                        cwd=BRIDGE_DIR,
+                        stdout=bridge_log,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True
+                    )
+                    with open(BRIDGE_PID_FILE, "w") as f:
+                        f.write(str(bridge_proc.pid))
         except KeyboardInterrupt:
             stop_services()
 

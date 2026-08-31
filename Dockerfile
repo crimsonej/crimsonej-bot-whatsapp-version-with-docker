@@ -20,7 +20,7 @@ COPY whatsapp-bridge/package.json /app/whatsapp-bridge/package.json
 COPY whatsapp-bridge/package-lock.json /app/whatsapp-bridge/package-lock.json
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r /app/crimson-bot/requirements.txt
+RUN pip install --no-cache-dir -r /app/crimson-bot/requirements.txt && pip install --no-cache-dir -U yt-dlp
 
 # Install Node.js dependencies
 WORKDIR /app/whatsapp-bridge
