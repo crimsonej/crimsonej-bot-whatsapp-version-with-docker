@@ -2,8 +2,8 @@
 core/llm.py
 ===========
 LLM client initialization, fallback pipeline, and token truncation.
-Primary engine: NVIDIA NIM (meta/llama-3.3-70b-instruct)
-Fallback: NVIDIA NIM (meta/llama-3.1-8b-instruct)
+Primary engine: NVIDIA NIM (nvidia/llama-3.1-nemotron-70b-instruct)
+Fallback: NVIDIA NIM (nvidia/llama-3.1-nemotron-51b-instruct)
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ import tiktoken
 
 from core.config import cfg, get_nvidia_key, log
 
-# Model constants
-NVIDIA_BRAIN = "meta/llama-3.3-70b-instruct"   # Primary 70B
-NVIDIA_SCOUT = "meta/llama-3.1-8b-instruct"    # Fast 8B
+# Model constants — verified active on NVIDIA NIM API 2026-08-31
+NVIDIA_BRAIN = "meta/llama-3.2-90b-vision-instruct"      # Primary 90B Llama 3.2 Flagship
+NVIDIA_SCOUT = "nv-mistralai/mistral-nemo-12b-instruct"  # Fast 12B Scout
 
 nvidia_client: NvidiaOpenAI | None = None
 
@@ -107,7 +107,16 @@ def _call_nvidia(messages: list, tools: list | None = None, model: str = NVIDIA_
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
-    return nvidia_client.chat.completions.create(**payload)
+    try:
+        return nvidia_client.chat.completions.create(**payload)
+    except Exception as exc:
+        if tools and "404" in str(exc):
+            log.info("[LLM] Model %s returned 404 for tools parameter — retrying without tools...", model)
+            payload.pop("tools", None)
+            payload.pop("tool_choice", None)
+            payload["temperature"] = 0.7
+            return nvidia_client.chat.completions.create(**payload)
+        raise exc
 
 def call_llm(messages: list[dict[str, str]], tools: list | None = None, tool_executor_fn=None, user_id: str | None = None, sender_jid: str | None = None) -> dict:
     """
@@ -201,11 +210,15 @@ def _sanitize_tool_reply(reply: object) -> str:
     if not text:
         return ""
     lower = text.lower()
-    if re.match(r'^\s*\{.*?"name"\s*:\s*".*?".*?"parameters"\s*:\s*\{', text, re.DOTALL):
-        return "I’m not meant to send raw tool data. Tell me the exact track/version and I’ll sort it cleanly."
-    if "example.com" in lower or "audio-download-link" in lower or "video-download-link" in lower:
-        return "I sent the wrong thing there. Tell me the exact track/version and I’ll do it properly."
-    if "download_video function" in lower or "download_audio function" in lower:
-        return "I’m not supposed to expose the tool call. Tell me the exact track/version and I’ll sort it cleanly."
+    if any(phrase in lower for phrase in [
+        "don't have a specific function",
+        "no specific function to call",
+        "don't have a tool to",
+        "no tool available to",
+        "cannot invoke a function",
+        "no function to call",
+        "what you are trying to accomplish"
+    ]):
+        return "Yo! What’s good? What are we getting into today? 😎"
     return text
 

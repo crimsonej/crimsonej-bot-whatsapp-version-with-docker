@@ -6,22 +6,17 @@
   },
   "models": [
     {
-      "id": "meta/llama-3.3-70b-instruct",
+      "id": "meta/llama-3.2-90b-vision-instruct",
       "provider": "nvidia",
       "tier": "primary"
     },
     {
-      "id": "meta/llama-3.1-8b-instruct",
+      "id": "nv-mistralai/mistral-nemo-12b-instruct",
       "provider": "nvidia",
       "tier": "scout"
-    },
-    {
-      "id": "llama-3.3-70b-versatile",
-      "provider": "groq",
-      "tier": "fallback"
     }
   ],
-  "active_model": "nvidia/nemotron-3-super-120b-a12b",
+  "active_model": "meta/llama-3.2-90b-vision-instruct",
   "port": 5000,
   "relevance_threshold": 0.08,
   "session_ttl": 1800
