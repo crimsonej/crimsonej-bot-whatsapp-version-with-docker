@@ -977,6 +977,9 @@ let text = m.conversation
         } finally {
             clearInterval(typingInterval);
         }
+    } catch (e) {
+        console.error('[BRIDGE] handleMessage outer error:', e.message);
+    }
 }
 
 // ─── AI Response Dispatcher ──────────────────────────────────────────────────
