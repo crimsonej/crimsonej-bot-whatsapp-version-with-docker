@@ -162,8 +162,9 @@ def stream_logs(target: str = "all") -> None:
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    is_fg = "--foreground" in sys.argv or "-f" in sys.argv
     if cmd == "start":
-        start_services()
+        start_services(foreground=is_fg)
     elif cmd == "stop":
         stop_services()
     elif cmd == "restart":
