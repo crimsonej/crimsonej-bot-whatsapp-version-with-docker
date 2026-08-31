@@ -96,27 +96,16 @@ def _strip_think(text: str) -> str:
 def _call_nvidia(messages: list, tools: list | None = None, model: str = NVIDIA_BRAIN, max_tokens: int = 1024, timeout: float = 20.0) -> object:
     if not nvidia_client:
         raise RuntimeError("NVIDIA client is not initialized.")
-    temp = 0.7 if not tools else 0.3
+    if not model or any(d in model for d in ["llama-3.3", "llama-3.1-8b", "versatile"]):
+        model = NVIDIA_BRAIN
     payload = {
         "model": model,
         "messages": messages,
-        "temperature": temp,
+        "temperature": 0.7,
         "max_tokens": max_tokens,
         "timeout": timeout,
     }
-    if tools:
-        payload["tools"] = tools
-        payload["tool_choice"] = "auto"
-    try:
-        return nvidia_client.chat.completions.create(**payload)
-    except Exception as exc:
-        if tools and "404" in str(exc):
-            log.info("[LLM] Model %s returned 404 for tools parameter — retrying without tools...", model)
-            payload.pop("tools", None)
-            payload.pop("tool_choice", None)
-            payload["temperature"] = 0.7
-            return nvidia_client.chat.completions.create(**payload)
-        raise exc
+    return nvidia_client.chat.completions.create(**payload)
 
 def call_llm(messages: list[dict[str, str]], tools: list | None = None, tool_executor_fn=None, user_id: str | None = None, sender_jid: str | None = None) -> dict:
     """
