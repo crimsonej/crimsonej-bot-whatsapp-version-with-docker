@@ -85,6 +85,13 @@ def start_services(foreground: bool = False) -> None:
     print("  • Stop bot: \033[1mcrimsonej stop\033[0m\n")
 
     if foreground:
+        def _handle_signal(sig, frame):
+            print(f"\n[Orchestrator] Received signal {sig}, stopping services...")
+            stop_services()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, _handle_signal)
+        signal.signal(signal.SIGTERM, _handle_signal)
         try:
             while True:
                 time.sleep(1)
