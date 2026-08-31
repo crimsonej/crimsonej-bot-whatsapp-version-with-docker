@@ -20,7 +20,7 @@ from core.config import cfg, get_nvidia_key, log
 
 # Model constants — verified active on NVIDIA NIM API 2026-08-31
 NVIDIA_BRAIN = "meta/llama-3.2-90b-vision-instruct"      # Primary 90B Llama 3.2 Flagship
-NVIDIA_SCOUT = "nv-mistralai/mistral-nemo-12b-instruct"  # Fast 12B Scout
+NVIDIA_SCOUT = "meta/llama-3.2-11b-vision-instruct"      # Fast 11B Vision Scout (free-tier compatible)
 
 nvidia_client: NvidiaOpenAI | None = None
 
@@ -93,11 +93,16 @@ def _strip_think(text: str) -> str:
     text = re.sub(r"<think>.*", "", text, flags=re.DOTALL)
     return text.strip()
 
-def _call_nvidia(messages: list, tools: list | None = None, model: str = NVIDIA_BRAIN, max_tokens: int = 1024, timeout: float = 20.0) -> object:
+def _call_nvidia(messages: list, tools: list | None = None, model: str = NVIDIA_BRAIN, max_tokens: int = 512, timeout: float = 35.0) -> object:
     if not nvidia_client:
         raise RuntimeError("NVIDIA client is not initialized.")
-    if not model or any(d in model for d in ["llama-3.3", "llama-3.1-8b", "versatile"]):
+    # Sanitize model string: map deprecated or enterprise-only function IDs to working endpoints
+    m_lower = (model or "").lower()
+    if any(s in m_lower for s in ["scout", "11b", "8b", "nemo", "mistral-7b"]):
+        model = NVIDIA_SCOUT
+    elif not model or any(d in m_lower for d in ["llama-3.3", "llama-3.1", "nemotron", "versatile"]):
         model = NVIDIA_BRAIN
+
     payload = {
         "model": model,
         "messages": messages,

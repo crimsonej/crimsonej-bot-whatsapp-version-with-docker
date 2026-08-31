@@ -968,7 +968,7 @@ let text = m.conversation
                 group_name:     isGroup ? from : null,
                 bot_id:         botNum,
                 bot_lid:        botLid
-            }, { timeout: 120000 });
+            }, { timeout: 180000 });
             
             console.log('[BRIDGE] AI response status:', res.status, 'keys:', Object.keys(res.data || {}));
             await sendAIResponse(msg, from, res, quotedFake, quotedSender);
