@@ -140,8 +140,7 @@ def save_doc_sessions():
 user_last_search: dict[str, float] = {}
 user_last_msg: dict[str, float] = {}
 image_memory: dict[str, dict] = {}
-_pending_song_tasks: dict[str, dict] = {}
-_pending_song_cache: dict[str, str] = {}  # user_phone -> task_id
+pending_song_searches: dict[str, dict] = {}
 # sender -> {message_id, sent_text, sent_at} of the bot's most recent
 # conversational text reply. Populated by the bridge via POST /sent_ids and
 # consulted by services/self_correct.py to decide whether to edit/delete.
@@ -154,26 +153,6 @@ _state_lock = threading.Lock()
 
 from concurrent.futures import ThreadPoolExecutor
 _bg_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="crimson_bg")
-# ── Sync pending song tasks from task_store on startup ──────────────────────
-# This ensures song searches survive bot restarts
-try:
-    from services.tasks import task_store
-    all_tasks = task_store.list(limit=500)
-    for t in all_tasks:
-        if t.get("name", "").startswith("song_search_"):
-            data = t.get("metadata", {})
-            user_phone = t.get("owner_user_id", "")
-            if user_phone and "results" in data:
-                task_id = t["id"]
-                _pending_song_tasks[task_id] = {
-                    "type": data.get("type", "audio"),
-                    "results": data.get("results", []),
-                    "user_phone": user_phone,
-                }
-                _pending_song_cache[user_phone] = task_id
-                log.info("[SongSync] Restored pending song task #%s for %s", task_id, user_phone)
-except Exception as e:
-    log.debug("[SongSync] init failed: %s", e)
 
 def _submit_bg_task(fn, *args, **kwargs):
     try:
@@ -587,20 +566,7 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
         if not results:
             return {"reply": "couldn't find anything on YouTube for that 😭 try a different name?"}
         with _state_lock:
-            # Store in task store for persistence across restarts and conversation continuations
-            task = task_store.create(
-                kind="one_shot",
-                name=f"song_search_{media_type}",
-                action={},
-                schedule={"type": "at", "next_run_at": 0},
-                owner_user_id=user_phone,
-                owner_jid=sender,
-                notify_on="none",
-                metadata={"type": media_type, "results": results},
-            )
-            _pending_song_tasks[t["id"]] = {"type": media_type, "results": results}
-            _pending_song_cache[user_phone] = t["id"]
-            log.info("[Song] Stored search results in task #%s for %s", t["id"], user_phone)
+            pending_song_searches[user_phone] = {"type": media_type, "results": results}
         lines = [f"{i+1}. {v['title']} ({media_svc.format_duration(v.get('duration'))})" for i, v in enumerate(results[:10])]
         emoji = "🎬" if media_type == "video" else "🎵"
         return {"reply": f"{emoji} Select a number (1-{len(results)}):\n" + "\n".join(lines)}
@@ -999,11 +965,6 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
         if group_vault:
             system_prompt += group_vault
 
-    # Add pending task context for conversation continuity
-    pending_task_summary = getattr(session, '_pending_task_summary', '') or ''
-    if pending_task_summary:
-        system_prompt += f"\n[REMINDER: You have pending: {pending_task_summary}. Mention naturally if relevant.]"
-
     user_vault = get_vault_context(user_id)
     if user_vault:
         system_prompt += user_vault
@@ -1094,30 +1055,6 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
 
     # Record user turn early to prevent context race conditions across requests
     session.add("user", question, message_id=message_id, ts=time.time())
-
-    # Preserve pending task context for conversation continuity
-    try:
-        from services.tasks import task_store
-        user_tasks = task_store.list(owner_user_id=user_phone or user, limit=5)
-        pending_task_names = [t.get("name", "") for t in user_tasks if t.get("status") == "pending"]
-        if pending_task_names:
-            # Store as simple list in session for this request's context
-            session._pending_task_summary = "; ".join(pending_task_names[:3])
-        else:
-            session._pending_task_summary = ""
-    except Exception:
-        session._pending_task_summary = ""
-
-    # Preserve task context in session summary for conversation continuity
-    try:
-        from services.tasks import task_store
-        user_tasks = task_store.list(owner_user_id=user_phone or user, limit=5)
-        task_names = [t.get("name", "") for t in user_tasks if t.get("status") == "pending"]
-        if task_names and "last_task_context" not in session._store.get(sender, {}).get("_custom", {}):
-            # Store task summary in session for continuity
-            session._custom_task_context = {"pending_tasks": task_names}
-    except Exception:
-        pass
 
     user_content = truncate_to_tokens(f"Context:\n{context}{realtime_context}{visual_context}\n\nQuestion: {question}", MAX_USER_MSG_TOKENS)
     history = [{**msg, "content": truncate_to_tokens(msg["content"], MAX_HISTORY_MSG_TOKENS)} for msg in session.messages()]
@@ -1726,36 +1663,6 @@ def route_reply():
                                  payload={"task_id": t["id"], "title": choice.get("title"), "kind": f"download_{mtype}"})
                 return jsonify({"reply": f"on it 🎬 (task #{t['id']})" if mtype == "video" else f"on it 🎵 (task #{t['id']})"}), 200
         return jsonify({"reply": "That option isn’t valid. Try a number from the list."}), 200
-    # Automatic follow-up: if user message doesn't pick a number but we have
-    # pending song results from a previous search, offer them proactively
-    pending_offer = None
-    with _state_lock:
-        for pid, pdata in _pending_song_tasks.items():
-            if pdata.get("user_phone") == user_phone and pdata.get("results"):
-                # Check if we already offered these results recently
-                last_offer = getattr(session, '_last_song_offer_ts', 0)
-                if time.time() - last_offer > 300:  # offer again after 5 min
-                    pending_offer = pdata
-                    break
-
-    if pending_offer and not pending:
-        results = pending_offer.get("results", [])
-        if results:
-            # Offer the top 3 results again
-            top = results[:3]
-            lines_text = [f"{i+1}. {r.get('title', 'Unknown').strip()[:90]}" for i, r in enumerate(top, 1)]
-            offer_text = f"I still have those song search results for you:\n" + "\n".join(lines_text) + "\n\nReply with the number (1-3) or send a new search query."
-            return jsonify({"reply": offer_text}), 200
-
-    # Update last offer timestamp
-    if 'session' in dir():
-        session._last_song_offer_ts = time.time()
-
-    # Clean up old in-memory dict entries
-    with _state_lock:
-        pending_song_searches.pop(user_phone, None)
-
-    # Regular slash commands - check permissions first
 
     # Regular slash commands - check permissions first
     if raw_question.startswith("/"):
