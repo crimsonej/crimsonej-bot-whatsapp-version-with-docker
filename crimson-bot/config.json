@@ -1,6 +1,6 @@
 {
   "providers": {
-    "nvidia": "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",
+    "nvidia": "",
     "groq": "",
     "huggingface": ""
   },

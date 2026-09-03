@@ -95,6 +95,8 @@ class TaskStore:
             "created_at": now,
             "started_at": None,
             "finished_at": None,
+            "notification_pending": False,
+            "notification_sent_at": None,
             "last_event_seq": 0,
         }
         with self._lock:
@@ -153,6 +155,37 @@ class TaskStore:
             self._save_locked()
             return dict(task)
 
+    def claim_due(self, now: float | None = None, *, limit: int = 25) -> list[dict]:
+        """Atomically move due pending tasks to running and return snapshots."""
+        now = now or time.time()
+        claimed: list[dict] = []
+        with self._lock:
+            due = []
+            for task in self._tasks.values():
+                if task.get("status") != "pending":
+                    continue
+                schedule = task.get("schedule") or {}
+                run_at = schedule.get("next_run_at") or schedule.get("run_at")
+                if run_at is not None and run_at <= now:
+                    due.append(task)
+            due.sort(key=lambda task: (task.get("schedule") or {}).get("next_run_at") or 0)
+            for task in due[:limit]:
+                task["status"] = "running"
+                task["started_at"] = now
+                task["progress"] = {**(task.get("progress") or {}), "pct": 5, "message": "running"}
+                claimed.append(dict(task))
+            if claimed:
+                self._save_locked()
+        return claimed
+
+    def mark_notification(self, task_id: str, *, sent: bool) -> dict | None:
+        """Persist task-result delivery so a transient bridge outage is recoverable."""
+        return self.update(
+            task_id,
+            notification_pending=not sent,
+            notification_sent_at=time.time() if sent else None,
+        )
+
     def cancel(self, task_id: str) -> dict | None:
         return self.update(task_id, expected_status="pending", status="cancelled",
                            finished_at=time.time())
@@ -160,12 +193,14 @@ class TaskStore:
     def done(self, task_id: str, result: Any) -> dict | None:
         return self.update(task_id, expected_status="running", status="done",
                            result=result, finished_at=time.time(),
-                           progress={"pct": 100, "message": "done"})
+                           progress={"pct": 100, "message": "done"},
+                           notification_pending=True)
 
     def fail(self, task_id: str, error: str) -> dict | None:
         return self.update(task_id, expected_status="running", status="failed",
                            error=error, finished_at=time.time(),
-                           progress={"pct": 100, "message": "failed"})
+                           progress={"pct": 100, "message": "failed"},
+                           notification_pending=True)
 
     def requeue_for_retry(self, task_id: str, *, backoff_secs: float,
                           error: str) -> dict | None:

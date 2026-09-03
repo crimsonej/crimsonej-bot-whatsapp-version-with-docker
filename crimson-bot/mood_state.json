@@ -22,5 +22,29 @@
     "tone": null,
     "intensity": 1.0,
     "updated_at": 1787236272.4893692
+  },
+  "12345@s.whatsapp.net": {
+    "mood": "chill",
+    "tone": null,
+    "intensity": 1.0,
+    "updated_at": 1788451840.63689
+  },
+  "test_user_9999@s.whatsapp.net": {
+    "mood": "chill",
+    "tone": null,
+    "intensity": 1.0,
+    "updated_at": 1788453368.2530794
+  },
+  "test_user_8888@s.whatsapp.net": {
+    "mood": "chill",
+    "tone": null,
+    "intensity": 1.0,
+    "updated_at": 1788452050.5399516
+  },
+  "262277043323048@lid": {
+    "mood": "chill",
+    "tone": null,
+    "intensity": 1.0,
+    "updated_at": 1788459353.6186004
   }
 }

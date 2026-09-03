@@ -59,7 +59,23 @@ log = logging.getLogger("crimsonej")
 # Defaults – all overridable via config.json or environment variables
 _DEFAULTS: dict[str, Any] = {
     "providers": {},
-    "models": [],
+    "provider_base_urls": {
+        "nvidia": "https://integrate.api.nvidia.com/v1",
+        "groq": "https://api.groq.com/openai/v1",
+        "openai": "https://api.openai.com/v1",
+        "openrouter": "https://openrouter.ai/api/v1",
+        "together": "https://api.together.xyz/v1",
+        "deepseek": "https://api.deepseek.com",
+        "xai": "https://api.x.ai/v1",
+        "mistral": "https://api.mistral.ai/v1",
+        "huggingface": "https://router.huggingface.co/v1",
+    },
+    "models": [
+        {"id": "meta/llama-3.2-90b-vision-instruct", "provider": "nvidia", "tier": "primary"},
+        {"id": "llama-3.3-70b-versatile", "provider": "groq", "tier": "fallback"},
+        {"id": "meta-llama/llama-3.1-8b-instruct:free", "provider": "openrouter", "tier": "fallback"},
+        {"id": "meta/llama-3.2-11b-vision-instruct", "provider": "nvidia", "tier": "scout"},
+    ],
     "api_key": "",
     "model": "meta/llama-3.2-90b-vision-instruct",
     "active_model": "meta/llama-3.2-90b-vision-instruct",

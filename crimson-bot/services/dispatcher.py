@@ -83,7 +83,7 @@ class Dispatcher:
             free_slots = max(0, self.concurrency - self._inflight)
         if free_slots <= 0:
             return
-        due = task_store.due(limit=free_slots)
+        due = task_store.claim_due(limit=free_slots)
         for task in due:
             with self._inflight_lock:
                 # re-check at spawn time, in case concurrency filled up
@@ -102,9 +102,6 @@ class Dispatcher:
         name = task.get("name") or "task"
         owner_user_id = task.get("owner_user_id") or ""
         try:
-            task_store.update(task_id, expected_status="pending",
-                              status="running", started_at=time.time(),
-                              progress={"pct": 5, "message": "running"})
             event_log.append("task", "task_start",
                              summary=f"[Task {task_id}] {name} started",
                              user_id=owner_user_id or None,
@@ -122,13 +119,15 @@ class Dispatcher:
                              payload={"task_id": task_id, "name": name,
                                       "summary": _short_result(result)})
 
-            # For recurring, recompute next_run_at
-            self._reschedule_if_recurring(task)
-
             # Notify if requested
             notify_on = task.get("notify_on") or "done"
             if notify_on in ("done", "always") and self.reporter_send:
-                self.reporter_send(task, "done", result)
+                delivered = bool(self.reporter_send(task, "done", result))
+                task_store.mark_notification(task_id, sent=delivered)
+
+            # Requeue only after notification handling so recurring tasks retain
+            # a pending state and an undelivered result can still be retried.
+            self._reschedule_if_recurring(task)
 
         except Exception as exc:
             err = f"{type(exc).__name__}: {exc}"
@@ -164,7 +163,8 @@ class Dispatcher:
                                           "owner_jid": task.get("owner_jid") or ""})
                 notify_on = task.get("notify_on") or "done"
                 if notify_on in ("failed", "always") and self.reporter_send:
-                    self.reporter_send(task, "failed", err)
+                    delivered = bool(self.reporter_send(task, "failed", err))
+                    task_store.mark_notification(task_id, sent=delivered)
 
                 # For recurring tasks, even if last run failed, reschedule the next.
                 self._reschedule_if_recurring(task)
@@ -235,7 +235,13 @@ class Dispatcher:
         nxt = natural_cron.next_after(sched)
         if not nxt:
             return
-        task_store.update(task["id"], schedule={"next_run_at": nxt.timestamp()})
+        task_store.update(
+            task["id"],
+            status="pending",
+            started_at=None,
+            finished_at=None,
+            schedule={"next_run_at": nxt.timestamp()},
+        )
 
 
 def _short_result(result) -> str:

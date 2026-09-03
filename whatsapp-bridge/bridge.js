@@ -51,12 +51,73 @@ const deletedMessageCache = new Map();
 // AND messages.upsert (protocolMessage.editedMessage) paths.
 const lastEditForwarded = new Map();
 
+function isValidWhatsAppJid(jid) {
+    return typeof jid === 'string' && jid.includes('@');
+}
+
+// ── Per-JID Sequential Processing Queue ──────────────────────────────────────
+class PerJidQueueManager {
+    constructor() {
+        this.queues = new Map();
+        this.processing = new Set();
+    }
+
+    enqueue(jid, taskFn) {
+        if (!jid) return taskFn();
+        if (!this.queues.has(jid)) {
+            this.queues.set(jid, []);
+        }
+        return new Promise((resolve, reject) => {
+            this.queues.get(jid).push({ taskFn, resolve, reject });
+            this._processNext(jid);
+        });
+    }
+
+    async _processNext(jid) {
+        if (this.processing.has(jid)) return;
+        const q = this.queues.get(jid);
+        if (!q || q.length === 0) {
+            this.queues.delete(jid);
+            return;
+        }
+
+        this.processing.add(jid);
+        const { taskFn, resolve, reject } = q.shift();
+        try {
+            const result = await taskFn();
+            resolve(result);
+        } catch (err) {
+            reject(err);
+        } finally {
+            this.processing.delete(jid);
+            setImmediate(() => this._processNext(jid));
+        }
+    }
+}
+const messageQueue = new PerJidQueueManager();
+
 function clearStaleEditCache() {
     const now = Date.now();
     for (const [key, ts] of Array.from(lastEditForwarded.entries())) {
         if (now - ts > 10000) lastEditForwarded.delete(key);
     }
 }
+
+function clearStaleBridgeCaches() {
+    clearStaleEditCache();
+    clearStaleDeleteCache();
+    if (lastBotReplyByJid.size > 500) {
+        const keys = Array.from(lastBotReplyByJid.keys());
+        for (let i = 0; i < keys.length - 250; i++) {
+            lastBotReplyByJid.delete(keys[i]);
+        }
+    }
+    if (seenContacts.size > 1000) {
+        seenContacts.clear();
+    }
+}
+setInterval(clearStaleBridgeCaches, 120000);
+
 
 function recordEvent(kind, summary) {
     lastActivityAt = Date.now();
@@ -216,8 +277,9 @@ async function startBot() {
         for (const msg of messages) {
             receiveCount++;
             const mtype = msg.message && Object.keys(msg.message)[0] || 'unknown';
-            recordEvent('receive', `${mtype} from ${(msg.key?.remoteJid || '').split('@')[0]}`);
-            await handleMessage(msg).catch(err =>
+            const jid = msg.key?.remoteJid || 'global';
+            recordEvent('receive', `${mtype} from ${jid.split('@')[0]}`);
+            await messageQueue.enqueue(jid, () => handleMessage(msg)).catch(err =>
                 console.error('[BRIDGE] Handler error:', err.message)
             );
         }
@@ -805,8 +867,20 @@ let text = m.conversation
         const docMsg   = m.documentMessage;
         const fileName = docMsg.fileName || 'document';
         const mimetype = docMsg.mimetype || '';
-        const allowed  = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain'];
-        if (allowed.includes(mimetype) || fileName.endsWith('.pdf') || fileName.endsWith('.docx') || fileName.endsWith('.txt')) {
+        const allowed  = [
+            'application/pdf',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-excel',
+            'application/vnd.ms-powerpoint',
+            'text/plain',
+            'text/csv',
+            'text/markdown',
+            'application/json',
+        ];
+        const knownExts = ['.pdf','.docx','.doc','.pptx','.ppt','.xlsx','.xls','.csv','.txt','.md','.json','.py','.js','.html','.xml'];
+        if (allowed.includes(mimetype) || knownExts.some(ext => fileName.toLowerCase().endsWith(ext))) {
             const buf = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
             if (buf) {
                 try {
@@ -948,10 +1022,11 @@ let text = m.conversation
         if (buf) imageData = buf.toString('base64');
     }
 
+    let typingInterval = null;
     try {
         // Show "typing..." indicator immediately and keep it active
         await sock.sendPresenceUpdate('composing', from).catch(() => {});
-        const typingInterval = setInterval(() => {
+        typingInterval = setInterval(() => {
             sock.sendPresenceUpdate('composing', from).catch(() => {});
         }, 10000); // Refresh every 10s
 
@@ -975,7 +1050,7 @@ let text = m.conversation
         } catch (e) {
             console.error('[BRIDGE] AI error:', e.message, e.code || '', e.response?.status || '');
         } finally {
-            clearInterval(typingInterval);
+            if (typingInterval) clearInterval(typingInterval);
         }
     } catch (e) {
         console.error('[BRIDGE] handleMessage outer error:', e.message);
@@ -1055,6 +1130,48 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
         }
     }
 
+    // Send generated document files (create_document tool output)
+    if (data.file_path && fs.existsSync(data.file_path)) {
+        try {
+            const buf = fs.readFileSync(data.file_path);
+            const fname = data.file_name || 'document';
+            const fmt = (data.file_format || '').toLowerCase();
+            const mimeMap = {
+                pdf:  'application/pdf',
+                docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            };
+            const mime = mimeMap[fmt] || 'application/octet-stream';
+            await trackedSend(sendJid, { document: buf, mimetype: mime, fileName: fname, caption: '' });
+            fs.unlink(data.file_path, () => {});
+            console.log(`[DocCreate] Sent ${fname} to ${sendJid.split('@')[0]}`);
+        } catch (e) {
+            console.error('[DocCreate] send error:', e.message);
+        }
+    } else if (data.document_list && Array.isArray(data.document_list)) {
+        for (const docEntry of data.document_list) {
+            if (!docEntry.path || !fs.existsSync(docEntry.path)) continue;
+            try {
+                const buf = fs.readFileSync(docEntry.path);
+                const fname = docEntry.filename || 'document';
+                const fmt = (docEntry.format || '').toLowerCase();
+                const mimeMap = {
+                    pdf:  'application/pdf',
+                    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                };
+                const mime = mimeMap[fmt] || 'application/octet-stream';
+                await trackedSend(sendJid, { document: buf, mimetype: mime, fileName: fname, caption: '' });
+                fs.unlink(docEntry.path, () => {});
+                console.log(`[DocCreate] Sent ${fname} to ${sendJid.split('@')[0]}`);
+            } catch (e) {
+                console.error('[DocCreate] send error:', e.message);
+            }
+        }
+    }
+
     // Send stickers
     if (data.sticker_list && Array.isArray(data.sticker_list)) {
         for (const stk of data.sticker_list) {
@@ -1075,6 +1192,7 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
 
     // Send text reply (or in-place edit of a previous bot message)
     } else if (data.reply || (data.edit_mode && data.replace_message_id)) {
+
         if (data.edit_mode && data.replace_message_id) {
             const finalText = data.reply || '...';
             sentText = finalText;
@@ -1387,6 +1505,36 @@ http.createServer((req, res) => {
                 console.error('[API] /post_status error:', e.message);
                 res.writeHead(500);
                 res.end(e.message);
+            }
+        });
+        return;
+    }
+
+    if (req.method === 'POST' && req.url === '/group_admins') {
+        let body = '';
+        req.on('data', chunk => body += chunk.toString());
+        req.on('end', async () => {
+            try {
+                const { jid } = JSON.parse(body);
+                if (!sock) {
+                    res.writeHead(503, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
+                }
+                if (!jid || !jid.endsWith('@g.us') || !isValidWhatsAppJid(jid)) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'invalid_group_jid' }));
+                }
+                const meta = await sock.groupMetadata(jid);
+                const admins = (meta.participants || [])
+                    .filter(p => p.admin)
+                    .map(p => p.id || p.jid)
+                    .filter(Boolean);
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ ok: true, admins }));
+            } catch (e) {
+                console.error('[API] /group_admins error:', e.message);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ ok: false, error: e.message }));
             }
         });
         return;

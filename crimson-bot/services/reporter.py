@@ -85,6 +85,24 @@ class Reporter:
                 self._last_seq = max(self._last_seq, int(evt.get("seq") or 0))
             except Exception:
                 pass
+        self._retry_pending_task_notifications()
+
+    def _retry_pending_task_notifications(self) -> None:
+        """Deliver task results missed while the bridge was unavailable."""
+        for task in task_store.list(limit=200):
+            if not task.get("notification_pending"):
+                continue
+            status = task.get("status")
+            if status == "done" and task.get("notify_on") in ("done", "always"):
+                delivered = self._send_task_notification(task, "done", task.get("result"))
+            elif status == "pending" and task.get("kind") == "recurring" and task.get("result"):
+                delivered = self._send_task_notification(task, "done", task.get("result"))
+            elif status == "failed" and task.get("notify_on") in ("failed", "always"):
+                delivered = self._send_task_notification(task, "failed", task.get("error"))
+            else:
+                delivered = True
+            if delivered:
+                task_store.mark_notification(task["id"], sent=True)
 
     def _handle(self, evt: dict) -> None:
         kind = evt.get("kind")
@@ -154,7 +172,7 @@ class Reporter:
                              payload={"silence_ms": silence_ms})
 
     # ── Send helpers ─────────────────────────────────────────────────────────
-    def _send_wa(self, jid: str, text: str) -> None:
+    def _send_wa(self, jid: str, text: str) -> bool:
         """Outbound channel: POST to bridge via the shared helper. If the bridge
         is also down we just log; nothing else we can do."""
         import services.bridge_api as bridge_api
@@ -164,15 +182,17 @@ class Reporter:
             event_log.append("reporter", "alert_send_failed",
                              summary=f"couldn't deliver to {jid}: {r.get('error')}",
                              payload={"jid": jid, "text": text[:120]})
+            return False
+        return True
 
-    def _send_task_notification(self, task: dict, status: str, result) -> None:
+    def _send_task_notification(self, task: dict, status: str, result) -> bool:
         """Called by dispatcher after task_done or task_fail when notify_on allows."""
         if status not in ("done", "failed"):
-            return
+            return True
         user_id = task.get("owner_user_id") or ""
         jid = task.get("owner_jid") or self._jid_for_user(user_id) or ""
         if not jid:
-            return
+            return True
         task_id = task.get("id", "?")
         name = task.get("name") or "task"
         if status == "done":
@@ -197,12 +217,13 @@ class Reporter:
                     )
                     if r.get("ok"):
                         log.info("[Reporter] media delivered for %s: mid=%s", name, r.get("message_id"))
+                        return True
                     else:
                         log.warning("[Reporter] media delivery FAILED for %s: %s", name, r.get("error"))
-                    return
+                        return False
                 else:
                     log.info("[Reporter] path missing on disk, falling back to text")
-        self._send_wa(jid, body)
+        return self._send_wa(jid, body)
 
     def _jid_for_user(self, user_id: str) -> str | None:
         """Return a valid WhatsApp JID for a user_phone.
@@ -238,6 +259,8 @@ def _format_done(task_id: str, name: str, result) -> str:
             summary = ""
     elif result:
         summary = f"\n{str(result)[:200]}"
+    if isinstance(result, dict) and result.get("report"):
+        summary = f"\n{str(result['report'])[:12000]}"
     return f"✅ task #{task_id} ({name}) done{summary}"
 
 

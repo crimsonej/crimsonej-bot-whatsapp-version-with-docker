@@ -758,6 +758,176 @@ LIST_BRIEFINGS_TOOL = {
     }
 }
 
+CREATE_DOCUMENT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "create_document",
+        "description": (
+            "Create, edit, modify, or convert a downloadable document file (Word .docx, PDF .pdf, "
+            "PowerPoint .pptx, or Excel .xlsx). Use when the user asks you to "
+            "'create a document', 'make a report', 'write a Word file', 'generate a "
+            "PDF', 'make a PowerPoint', 'create an Excel sheet', or when asked to EDIT, MODIFY, "
+            "UPDATE, REWRITE, or CONVERT an attached or quoted document. "
+            "When editing an existing document, combine the extracted content with the requested "
+            "modifications and output the complete updated document. "
+            "Structure the content clearly with headings, bullet points, tables, and "
+            "paragraphs. The file will be sent directly as a WhatsApp attachment."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "enum": ["docx", "pdf", "pptx", "xlsx"],
+                    "description": "File format to create: 'docx' (Word), 'pdf', 'pptx' (PowerPoint), 'xlsx' (Excel)."
+                },
+                "title": {
+                    "type": "string",
+                    "description": "The document title or heading."
+                },
+                "content": {
+                    "type": "string",
+                    "description": (
+                        "The full document content in plain text. Use markdown-style formatting: "
+                        "# for headings, - for bullets, | for tables (pipe-separated). "
+                        "Write complete, detailed content as you'd want it to appear in the final document."
+                    )
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Optional output filename (without extension, e.g. 'market_report'). Defaults to a sanitized version of the title."
+                }
+            },
+            "required": ["format", "title", "content"]
+        }
+    }
+}
+
+FETCH_URL_CONTENT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "fetch_url_content",
+        "description": "Fetch, extract, and read main article text and headers from any web link or URL.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The web URL to fetch and read (e.g. 'https://techcrunch.com/...')"
+                }
+            },
+            "required": ["url"]
+        }
+    }
+}
+
+GET_YOUTUBE_TRANSCRIPT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_youtube_transcript",
+        "description": "Fetch full text captions/transcript for a YouTube video URL or ID for instant summarization and QA.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url_or_id": {
+                    "type": "string",
+                    "description": "The YouTube video URL or 11-character video ID."
+                }
+            },
+            "required": ["url_or_id"]
+        }
+    }
+}
+
+SEARCH_REDDIT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "search_reddit",
+        "description": "Search Reddit posts, discussions, and community consensus for product reviews, human opinions, or topic discussions.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search term or question to look up on Reddit."
+                },
+                "subreddit": {
+                    "type": "string",
+                    "description": "Optional specific subreddit name (e.g. 'technology', 'askreddit')."
+                }
+            },
+            "required": ["query"]
+        }
+    }
+}
+
+SEARCH_GITHUB_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "search_github",
+        "description": "Search GitHub repositories, projects, README summaries, and code solutions.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The repository, tool, or code search query."
+                }
+            },
+            "required": ["query"]
+        }
+    }
+}
+
+SUBSCRIBE_NEWS_FEED_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "subscribe_news_feed",
+        "description": "Fetch latest news headlines from an RSS feed URL or topic ('tech', 'ai', 'crypto', 'news', 'finance').",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "feed_url_or_topic": {
+                    "type": "string",
+                    "description": "RSS feed URL or preset topic ('tech', 'ai', 'crypto', 'news', 'finance')."
+                }
+            },
+            "required": ["feed_url_or_topic"]
+        }
+    }
+}
+
+DEEP_RESEARCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "deep_research",
+        "description": (
+            "Run an autonomous deep research agent on a complex topic across multiple internet sources "
+            "(Web search, Reddit, articles). Generates a detailed multi-section research report. "
+            "Set export_doc=true to automatically send the research as a downloadable PDF or Word attachment!"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": "The complex research topic or prompt."
+                },
+                "export_doc": {
+                    "type": "boolean",
+                    "description": "Whether to export and send the research report as a document file attachment (default false)."
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["pdf", "docx"],
+                    "description": "Document format if export_doc is true ('pdf' or 'docx'). Default 'pdf'."
+                }
+            },
+            "required": ["topic"]
+        }
+    }
+}
+
 ALL_TOOLS = [
     WEB_SEARCH_TOOL,
     ANALYZE_IMAGE_TOOL,
@@ -793,6 +963,13 @@ ALL_TOOLS = [
     SUBSCRIBE_BRIEFING_TOOL,
     UNSUBSCRIBE_BRIEFING_TOOL,
     LIST_BRIEFINGS_TOOL,
+    CREATE_DOCUMENT_TOOL,
+    FETCH_URL_CONTENT_TOOL,
+    GET_YOUTUBE_TRANSCRIPT_TOOL,
+    SEARCH_REDDIT_TOOL,
+    SEARCH_GITHUB_TOOL,
+    SUBSCRIBE_NEWS_FEED_TOOL,
+    DEEP_RESEARCH_TOOL,
 ]
 
 def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_service=None, vision_service=None) -> dict:
@@ -812,23 +989,28 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
 
         if name == "web_search":
             query = args.get("query", "")
-            # If this looks like a music/media query, try expanded variants and simple spelling variants
             tried = []
             search_result = None
-            for q in _expand_music_queries(query):
-                tried.append(q)
-                search_result = _search_with_retries(q)
-                if isinstance(search_result, dict) and search_result.get("results"):
-                    log.info("[Search] variant matched: %r", q)
-                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(search_result)})
-                    break
-            if not search_result or not isinstance(search_result, dict):
-                # fallback: single plain search attempt with retries
-                search_result = _search_with_retries(query)
-                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(search_result)})
+            try:
+                variants = _expand_music_queries(query) if _looks_like_media_search(query) else [query]
+                for q in variants:
+                    tried.append(q)
+                    search_result = _search_with_retries(q)
+                    if isinstance(search_result, dict) and search_result.get("results"):
+                        log.info("[Search] variant matched: %r", q)
+                        break
+                if not isinstance(search_result, dict):
+                    search_result = {}
+            except Exception as exc:
+                log.warning("[Search] failed for %r: %s", query, exc)
+                search_result = {"ok": False, "error": str(exc), "results": []}
 
-            search_reply = _format_search_suggestions(query, search_result, tried)
-            return {**tool_results, "reply": search_reply}
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(search_result)})
+
+            if _looks_like_media_search(query):
+                search_reply = _format_search_suggestions(query, search_result, tried)
+                return {**tool_results, "reply": search_reply}
+            continue
 
         elif name == "analyze_image":
             image_base64 = args.get("image_base64", "")
@@ -1425,6 +1607,86 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
                 )
                 messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": description or "Failed."})
 
+        elif name == "create_document":
+            from services.doc_writer import create_document_file
+            doc_format  = args.get("format", "docx")
+            doc_title   = args.get("title", "Document")
+            doc_content = args.get("content", "")
+            doc_fname   = args.get("filename") or None
+
+            result = create_document_file(doc_format, doc_title, doc_content, doc_fname)
+            if result:
+                file_path, out_filename = result
+                tool_results.setdefault("document_list", []).append({
+                    "path": file_path,
+                    "filename": out_filename,
+                    "format": doc_format,
+                })
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
+                                 "content": json.dumps({"ok": True, "filename": out_filename,
+                                                        "reply": f"here you go 📎 *{out_filename}* — sending it now"})})
+                return {**tool_results,
+                        "reply": f"here you go 📎 *{out_filename}* — sending it now"}
+            else:
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
+                                 "content": json.dumps({"ok": False, "error": "document generation failed"})})
+
+        elif name == "fetch_url_content":
+            from services.web_reader import fetch_url_content as read_url
+            url = args.get("url", "")
+            res = read_url(url)
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(res)})
+            if res.get("ok") and res.get("text"):
+                return {**tool_results, "reply": f"📰 *{res.get('title','Article')}* ({res.get('domain','')})\n\n{res['text'][:3000]}..."}
+
+        elif name == "get_youtube_transcript":
+            from services.yt_transcript import get_youtube_transcript as get_yt_trans
+            url_or_id = args.get("url_or_id", "")
+            res = get_yt_trans(url_or_id)
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(res)})
+            if res.get("ok") and res.get("transcript"):
+                return {**tool_results, "reply": f"🎬 *YouTube Transcript ({res.get('duration_mins',0)} mins)*:\n\n{res['transcript'][:3000]}..."}
+
+        elif name == "search_reddit":
+            from services.reddit_scraper import search_reddit as reddit_srch
+            query = args.get("query", "")
+            sub = args.get("subreddit", "")
+            res = reddit_srch(query, sub)
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(res)})
+
+        elif name == "search_github":
+            from services.github_search import search_github as gh_srch
+            query = args.get("query", "")
+            res = gh_srch(query)
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(res)})
+
+        elif name == "subscribe_news_feed":
+            from services.rss_watchdog import fetch_rss_feed
+            feed = args.get("feed_url_or_topic", "")
+            res = fetch_rss_feed(feed)
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(res)})
+
+        elif name == "deep_research":
+            from services.deep_research import run_deep_research_task
+            topic = args.get("topic", "")
+            export_doc = bool(args.get("export_doc", False))
+            fmt = args.get("format", "pdf")
+            t = task_store.create(
+                kind="background",
+                name=f"deep_research: {topic[:40]}",
+                action={"module": "services.deep_research", "fn": "run_deep_research_task",
+                        "kwargs": {"topic": topic, "export_doc": export_doc, "format": fmt}},
+                owner_user_id=user_id or "",
+                owner_jid=sender_jid or "",
+                notify_on="done",
+                metadata={"topic": topic, "export_doc": export_doc, "format": fmt},
+            )
+            result = {"ok": True, "task_id": t["id"],
+                      "reply": f"I’m on it. I’ll send the research results here when task #{t['id']} finishes."}
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
+                             "content": json.dumps(result)})
+            return {**tool_results, "reply": result["reply"]}
+
         elif name == "parse_document":
             # Accept both the tool schema names and the bridge's field names
             document_base64 = args.get("document_base64", "") or args.get("document_data", "") or args.get("document", "")
@@ -1674,6 +1936,11 @@ def _expand_music_queries(query: str) -> list:
         if len(out) >= 8:
             break
     return out
+
+
+def _looks_like_media_search(query: str) -> bool:
+    q = (query or "").lower()
+    return bool(re.search(r"\b(song|track|audio|music|lyrics|artist|youtube|video|download|mp3|mp4)\b", q))
 
 
 def _is_ambiguous_generation_prompt(prompt: str) -> bool:

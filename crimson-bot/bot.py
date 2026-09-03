@@ -29,7 +29,8 @@ from PIL import Image
 
 from core.config import (
     BASE_DIR, DOCS_DIR, VECTORS_FILE, CACHE_FILE, DOC_SESSIONS_FILE,
-    CFG_FILE, TZ, cfg, get_groq_key, load_json, save_json, log
+    CFG_FILE, EVENTS_FILE, VAULTS_DIR, TZ, cfg, get_groq_key, load_config,
+    load_json, save_json, log
 )
 from core.eventlog import event_log
 from core.llm import call_llm, _call_nvidia, NVIDIA_SCOUT, MAX_CONTEXT_TOKENS, MAX_SYSTEM_TOKENS, MAX_USER_MSG_TOKENS, MAX_HISTORY_MSG_TOKENS, truncate_to_tokens, scout_quick_call
@@ -139,7 +140,8 @@ def save_doc_sessions():
 user_last_search: dict[str, float] = {}
 user_last_msg: dict[str, float] = {}
 image_memory: dict[str, dict] = {}
-pending_song_searches: dict[str, dict] = {}
+_pending_song_tasks: dict[str, dict] = {}
+_pending_song_cache: dict[str, str] = {}  # user_phone -> task_id
 # sender -> {message_id, sent_text, sent_at} of the bot's most recent
 # conversational text reply. Populated by the bridge via POST /sent_ids and
 # consulted by services/self_correct.py to decide whether to edit/delete.
@@ -149,6 +151,35 @@ MSG_COOLDOWN_SECS = 0.5
 # Thread-safe access to the dicts above. Now that Flask runs threaded=True,
 # multiple workers can mutate these concurrently.
 _state_lock = threading.Lock()
+
+from concurrent.futures import ThreadPoolExecutor
+_bg_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="crimson_bg")
+# ── Sync pending song tasks from task_store on startup ──────────────────────
+# This ensures song searches survive bot restarts
+try:
+    from services.tasks import task_store
+    all_tasks = task_store.list(limit=500)
+    for t in all_tasks:
+        if t.get("name", "").startswith("song_search_"):
+            data = t.get("metadata", {})
+            user_phone = t.get("owner_user_id", "")
+            if user_phone and "results" in data:
+                task_id = t["id"]
+                _pending_song_tasks[task_id] = {
+                    "type": data.get("type", "audio"),
+                    "results": data.get("results", []),
+                    "user_phone": user_phone,
+                }
+                _pending_song_cache[user_phone] = task_id
+                log.info("[SongSync] Restored pending song task #%s for %s", task_id, user_phone)
+except Exception as e:
+    log.debug("[SongSync] init failed: %s", e)
+
+def _submit_bg_task(fn, *args, **kwargs):
+    try:
+        _bg_executor.submit(fn, *args, **kwargs)
+    except Exception as exc:
+        log.warning("[BG Task] submission error: %s", exc)
 
 # simple in-memory dedupe for raw error notifications: fingerprint -> last_sent_ts
 _error_notify_cache: dict[str, float] = {}
@@ -556,7 +587,20 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
         if not results:
             return {"reply": "couldn't find anything on YouTube for that 😭 try a different name?"}
         with _state_lock:
-            pending_song_searches[user_phone] = {"type": media_type, "results": results}
+            # Store in task store for persistence across restarts and conversation continuations
+            task = task_store.create(
+                kind="one_shot",
+                name=f"song_search_{media_type}",
+                action={},
+                schedule={"type": "at", "next_run_at": 0},
+                owner_user_id=user_phone,
+                owner_jid=sender,
+                notify_on="none",
+                metadata={"type": media_type, "results": results},
+            )
+            _pending_song_tasks[t["id"]] = {"type": media_type, "results": results}
+            _pending_song_cache[user_phone] = t["id"]
+            log.info("[Song] Stored search results in task #%s for %s", t["id"], user_phone)
         lines = [f"{i+1}. {v['title']} ({media_svc.format_duration(v.get('duration'))})" for i, v in enumerate(results[:10])]
         emoji = "🎬" if media_type == "video" else "🎵"
         return {"reply": f"{emoji} Select a number (1-{len(results)}):\n" + "\n".join(lines)}
@@ -955,6 +999,11 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
         if group_vault:
             system_prompt += group_vault
 
+    # Add pending task context for conversation continuity
+    pending_task_summary = getattr(session, '_pending_task_summary', '') or ''
+    if pending_task_summary:
+        system_prompt += f"\n[REMINDER: You have pending: {pending_task_summary}. Mention naturally if relevant.]"
+
     user_vault = get_vault_context(user_id)
     if user_vault:
         system_prompt += user_vault
@@ -1003,9 +1052,10 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
     doc = doc_session.pop(sender, None) or doc_session.pop(session_key, None)
     if doc:
         realtime_context += f"\n[CURRENT DOCUMENT: {doc['name']}]\n"
+        realtime_context += "[INSTRUCTION: A document is attached/loaded. If the user requests edits, modifications, additions, formatting changes, or format conversion, apply the changes to the extracted text and call create_document to generate and send the updated document.]\n"
         if doc.get("base64"):
             # Auto-parse document and include extracted content
-            parsed = parse_document_with_nvidia(
+            parsed = vision_svc.parse_document_with_nvidia(
                 document_base64=doc["base64"],
                 filename=doc["name"],
                 prompt="Extract all text, tables, and key information from this document."
@@ -1018,6 +1068,19 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
                 realtime_context += "[INSTRUCTION: A document is attached. Call parse_document tool with the base64 above to extract its content.]\n"
         realtime_context += f"{doc['text'][:5000]}...\n"
 
+    # If user message contains a web URL link, auto-extract the page content
+    if "http://" in question or "https://" in question:
+        try:
+            urls = re.findall(r"https?://[^\s<>\"]+", question)
+            for u in urls[:2]:
+                if "youtube.com" not in u and "youtu.be" not in u:
+                    from services.web_reader import fetch_url_content as auto_read_url
+                    res = auto_read_url(u, max_chars=4000)
+                    if res.get("ok") and res.get("text"):
+                        realtime_context += f"\n[AUTO-EXTRACTED LINK CONTENT ({res.get('domain','')}):\n{res['text']}]\n"
+        except Exception as exc:
+            log.warning(f"[URL Auto-Extract] Error: {exc}")
+
     # If there is image/sticker data, ask the vision service to analyze and
     # append a short description to the user content so the LLM sees visual info.
     visual_context = ""
@@ -1029,8 +1092,37 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
         except Exception:
             visual_context = ""
 
+    # Record user turn early to prevent context race conditions across requests
+    session.add("user", question, message_id=message_id, ts=time.time())
+
+    # Preserve pending task context for conversation continuity
+    try:
+        from services.tasks import task_store
+        user_tasks = task_store.list(owner_user_id=user_phone or user, limit=5)
+        pending_task_names = [t.get("name", "") for t in user_tasks if t.get("status") == "pending"]
+        if pending_task_names:
+            # Store as simple list in session for this request's context
+            session._pending_task_summary = "; ".join(pending_task_names[:3])
+        else:
+            session._pending_task_summary = ""
+    except Exception:
+        session._pending_task_summary = ""
+
+    # Preserve task context in session summary for conversation continuity
+    try:
+        from services.tasks import task_store
+        user_tasks = task_store.list(owner_user_id=user_phone or user, limit=5)
+        task_names = [t.get("name", "") for t in user_tasks if t.get("status") == "pending"]
+        if task_names and "last_task_context" not in session._store.get(sender, {}).get("_custom", {}):
+            # Store task summary in session for continuity
+            session._custom_task_context = {"pending_tasks": task_names}
+    except Exception:
+        pass
+
     user_content = truncate_to_tokens(f"Context:\n{context}{realtime_context}{visual_context}\n\nQuestion: {question}", MAX_USER_MSG_TOKENS)
     history = [{**msg, "content": truncate_to_tokens(msg["content"], MAX_HISTORY_MSG_TOKENS)} for msg in session.messages()]
+    if history and history[-1].get("role") == "user":
+        history = history[:-1]
 
     messages = [{"role": "system", "content": system_msg}, *history, {"role": "user", "content": user_content}]
 
@@ -1082,18 +1174,26 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
         if emoji_enabled:
             max_per = int(cfg("emoji_max_per_reply") or 1)
             allow_roast = int(cfg("emoji_allow_in_roast") or 2)
-            cap = allow_roast if is_roast else max_per
+            cap = allow_roast if is_roast_flag else max_per
             reply_text = _limit_emojis(reply_text, cap)
             if isinstance(reply, dict):
                 reply["reply"] = reply_text
     except Exception:
         pass
 
-    session.add("user", question, message_id=message_id, ts=time.time())
     session.add("assistant", reply_text)
-    # Fire-and-forget: try to extract preferences from this exchange
+
+    # If the LLM created a document, include the file path/name in the response
+    if isinstance(reply, dict):
+        doc_list = reply.get("document_list") or []
+        if doc_list:
+            first = doc_list[0]
+            reply["file_path"] = first.get("path", "")
+            reply["file_name"] = first.get("filename", "")
+            reply["file_format"] = first.get("format", "")
+
+    # Fire-and-forget: try to extract preferences from this exchange using bounded thread pool
     try:
-        import threading
         from core.llm import scout_quick_call
         from services.memory import extract_preferences_background
 
@@ -1103,8 +1203,7 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
             except Exception:
                 pass
 
-        t = threading.Thread(target=_pref_task, args=(user_id or "", question), daemon=True)
-        t.start()
+        _submit_bg_task(_pref_task, user_id or "", question)
     except Exception:
         pass
 
@@ -1210,16 +1309,24 @@ def route_reply():
 
 # ── /read & /learn document handling ─────────────────────────────────────
     doc_b64 = body.get("document_data") or ""
+    doc_name = body.get("document_name") or "document"
+    doc_mime = body.get("document_mimetype") or ""
     if body.get("document") and doc_b64:
         try:
-            decoded = base64.b64decode(doc_b64).decode("utf-8", errors="replace")[:50000]
-            doc_session[sender] = {"name": body.get("document_name") or "document", "text": decoded}
+            from services.doc_reader import extract_document_text
+            parsed = extract_document_text(doc_b64, doc_name, doc_mime)
+            if parsed["ok"] and parsed["text"]:
+                doc_session[sender] = {"name": doc_name, "text": parsed["text"][:50000]}
+            else:
+                # Fallback: raw UTF-8 decode for plain text
+                decoded = base64.b64decode(doc_b64 + "==" if len(doc_b64) % 4 else doc_b64).decode("utf-8", errors="replace")[:50000]
+                doc_session[sender] = {"name": doc_name, "text": decoded}
             save_doc_sessions()
-            log.info("[Read] stored document %s (%d chars) for %s", body.get("document_name") or "document", len(decoded), user_phone)
+            log.info("[Read] stored document %s (%d chars) for %s", doc_name, len(doc_session[sender]["text"]), user_phone)
         except Exception as exc:
             log.warning("[Read] failed to decode document: %s", exc)
             if body.get("read_command"):
-                return jsonify({"reply": "Couldn't read that document — is it a text-based file?"}), 200
+                return jsonify({"reply": "Couldn't read that document — make sure it's a PDF, Word, Excel, PowerPoint, or text file."}), 200
 
     if body.get("learn_command"):
         learn_text = ""
@@ -1233,12 +1340,11 @@ def route_reply():
         if learn_text.strip():
             from services.memory import learn_task_background
             from functools import partial
-            threading.Thread(
-                target=learn_task_background,
-                args=(user_phone, learn_text, (body.get("document_name") or None) if doc_b64 else None,
-                      partial(_call_nvidia, model=NVIDIA_SCOUT)),
-                daemon=True,
-            ).start()
+            _submit_bg_task(
+                learn_task_background,
+                user_phone, learn_text, (body.get("document_name") or None) if doc_b64 else None,
+                partial(_call_nvidia, model=NVIDIA_SCOUT)
+            )
             log.info("[Learn] queued learning task for %s (%d chars)", user_phone, len(learn_text))
             return jsonify({"reply": "🧠 Got it — I'm adding that to my permanent memory."}), 200
         return jsonify({"reply": ""}), 200
@@ -1311,7 +1417,10 @@ def route_reply():
             return jsonify({"reply": ""}), 200
 
     # ── Auto-learn contact name & bump interaction count ──────────────────────
-    profile_mgr.touch(user_phone, push_name=push_name or None)
+    profile = profile_mgr.touch(user_phone, push_name=push_name or None)
+    if sender_jid and not sender_jid.endswith("@g.us"):
+        profile["jid"] = sender_jid
+        profile_mgr.save()
     visual_b64 = _visual_payload_base64(body)
 
     # ── WhatsApp Status (Story) Interception ──────────────────────────────────
@@ -1617,6 +1726,36 @@ def route_reply():
                                  payload={"task_id": t["id"], "title": choice.get("title"), "kind": f"download_{mtype}"})
                 return jsonify({"reply": f"on it 🎬 (task #{t['id']})" if mtype == "video" else f"on it 🎵 (task #{t['id']})"}), 200
         return jsonify({"reply": "That option isn’t valid. Try a number from the list."}), 200
+    # Automatic follow-up: if user message doesn't pick a number but we have
+    # pending song results from a previous search, offer them proactively
+    pending_offer = None
+    with _state_lock:
+        for pid, pdata in _pending_song_tasks.items():
+            if pdata.get("user_phone") == user_phone and pdata.get("results"):
+                # Check if we already offered these results recently
+                last_offer = getattr(session, '_last_song_offer_ts', 0)
+                if time.time() - last_offer > 300:  # offer again after 5 min
+                    pending_offer = pdata
+                    break
+
+    if pending_offer and not pending:
+        results = pending_offer.get("results", [])
+        if results:
+            # Offer the top 3 results again
+            top = results[:3]
+            lines_text = [f"{i+1}. {r.get('title', 'Unknown').strip()[:90]}" for i, r in enumerate(top, 1)]
+            offer_text = f"I still have those song search results for you:\n" + "\n".join(lines_text) + "\n\nReply with the number (1-3) or send a new search query."
+            return jsonify({"reply": offer_text}), 200
+
+    # Update last offer timestamp
+    if 'session' in dir():
+        session._last_song_offer_ts = time.time()
+
+    # Clean up old in-memory dict entries
+    with _state_lock:
+        pending_song_searches.pop(user_phone, None)
+
+    # Regular slash commands - check permissions first
 
     # Regular slash commands - check permissions first
     if raw_question.startswith("/"):

@@ -9,7 +9,17 @@ openai
 Pillow
 tiktoken
 PyPDF2
+pypdf
 python-docx
+python-pptx
+openpyxl
+reportlab
+tabulate
+trafilatura
+youtube-transcript-api
+feedparser
+httpx
+beautifulsoup4
 matplotlib
 yfinance
 

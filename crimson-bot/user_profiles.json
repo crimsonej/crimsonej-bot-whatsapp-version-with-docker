@@ -110,5 +110,33 @@
     "first_seen": "2026-08-20T17:02:46.949854",
     "is_creator": false,
     "ignore_status": false
+  },
+  "12345": {
+    "phone": "12345",
+    "name": "crimson",
+    "nicknames": [],
+    "facts": [],
+    "interests": [],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 1,
+    "last_seen": "2026-09-03T19:10:40.622964",
+    "first_seen": "2026-09-03T19:10:40.622931",
+    "is_creator": false,
+    "ignore_status": false
+  },
+  "test_user_9999": {
+    "phone": "test_user_9999",
+    "name": "crimson",
+    "nicknames": [],
+    "facts": [],
+    "interests": [],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 10,
+    "last_seen": "2026-09-03T19:36:08.251149",
+    "first_seen": "2026-09-03T19:11:17.819105",
+    "is_creator": false,
+    "ignore_status": false
   }
 }
