@@ -25,9 +25,12 @@ MAX_FACTS = 50      # Keep profile data bounded
 MAX_INTERESTS = 20
 
 
+import threading
+
 class ProfileManager:
     def __init__(self, filename="user_profiles.json"):
         self.filename = filename
+        self._lock = threading.Lock()
         self.profiles: dict[str, dict] = {}
         self.load()
 
@@ -35,36 +38,41 @@ class ProfileManager:
         if os.path.exists(self.filename):
             try:
                 with open(self.filename, 'r') as f:
-                    self.profiles = json.load(f)
+                    data = json.load(f)
+                    with getattr(self, "_lock", threading.Lock()):
+                        self.profiles = data
             except Exception as e:
                 logger.error(f"Error loading profiles: {e}")
                 self.profiles = {}
 
     def save(self):
+        with self._lock:
+            data = dict(self.profiles)
         try:
             with open(self.filename, 'w') as f:
-                json.dump(self.profiles, f, indent=2, ensure_ascii=False)
+                json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error(f"Error saving profiles: {e}")
 
     def get_profile(self, user_id: str) -> dict:
         """Get or create a profile for user_id (phone number string)."""
-        if user_id not in self.profiles:
-            self.profiles[user_id] = {
-                "phone": user_id,
-                "name": None,
-                "nicknames": [],
-                "facts": [],
-                "interests": [],
-                "relationship": None,   # e.g. "friend", "acquaintance", "close friend"
-                "preferences": {},
-                "interaction_count": 0,
-                "last_seen": None,
-                "first_seen": datetime.now().isoformat(),
-                "is_creator": False,
-                "ignore_status": False,  # If True, bot won't reply to this user's status updates
-            }
-        return self.profiles[user_id]
+        with self._lock:
+            if user_id not in self.profiles:
+                self.profiles[user_id] = {
+                    "phone": user_id,
+                    "name": None,
+                    "nicknames": [],
+                    "facts": [],
+                    "interests": [],
+                    "relationship": None,   # e.g. "friend", "acquaintance", "close friend"
+                    "preferences": {},
+                    "interaction_count": 0,
+                    "last_seen": None,
+                    "first_seen": datetime.now().isoformat(),
+                    "is_creator": False,
+                    "ignore_status": False,  # If True, bot won't reply to this user's status updates
+                }
+            return self.profiles[user_id]
 
     def touch(self, user_id: str, push_name: str | None = None) -> dict:
         """

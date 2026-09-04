@@ -140,6 +140,9 @@ function clearStaleDeleteCache() {
 
 async function instrumentedSend(jid, content, options) {
     try {
+        if (!sock || !sock.user) {
+            throw new Error("bridge_not_connected");
+        }
         const targetJid = outboundJid(jid) || jid;
         const res = await sock.sendMessage(targetJid, content, options);
         sendCount++;

@@ -97,52 +97,63 @@ class Session:
     def messages(self) -> list[dict[str, Any]]:
         return list(self.turns)
 
+import threading
+
 class SessionStore:
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self._store: dict[str, Session] = {}
         self.load()
 
     def load(self) -> None:
         data = load_json(SESSIONS_FILE, {})
-        for sender, turns in data.items():
-            s = Session(on_update=self.save)
-            cleaned_turns = []
-            for turn in turns.get("turns", []):
-                if not isinstance(turn, dict):
-                    continue
-                clean = dict(turn)
-                clean["content"] = _sanitize_session_content(clean.get("role", "user"), clean.get("content", ""))
-                cleaned_turns.append(clean)
-            s.turns = cleaned_turns
-            s.last_active = turns.get("last_active", time.time())
-            self._store[sender] = s
+        with getattr(self, "_lock", threading.Lock()):
+            for sender, turns in data.items():
+                s = Session(on_update=self.save)
+                cleaned_turns = []
+                for turn in turns.get("turns", []):
+                    if not isinstance(turn, dict):
+                        continue
+                    clean = dict(turn)
+                    clean["content"] = _sanitize_session_content(clean.get("role", "user"), clean.get("content", ""))
+                    cleaned_turns.append(clean)
+                s.turns = cleaned_turns
+                s.last_active = turns.get("last_active", time.time())
+                self._store[sender] = s
 
     def save(self) -> None:
-        data = {sender: {"turns": s.turns, "last_active": s.last_active} for sender, s in self._store.items()}
+        with self._lock:
+            data = {sender: {"turns": s.turns, "last_active": s.last_active} for sender, s in self._store.items()}
         save_json(SESSIONS_FILE, data)
 
     def get(self, sender: str) -> Session:
-        self._evict_expired()
-        if sender not in self._store:
-            self._store[sender] = Session(on_update=self.save)
-        return self._store[sender]
+        with self._lock:
+            self._evict_expired_locked()
+            if sender not in self._store:
+                self._store[sender] = Session(on_update=self.save)
+            return self._store[sender]
 
     def _evict_expired(self) -> None:
+        with self._lock:
+            self._evict_expired_locked()
+
+    def _evict_expired_locked(self) -> None:
         expired = [k for k, s in self._store.items() if s.is_expired()]
         if expired:
             for k in expired:
                 del self._store[k]
-            self.save()
 
     def clear(self, sender: str) -> None:
-        if sender in self._store:
-            del self._store[sender]
-            self.save()
+        with self._lock:
+            if sender in self._store:
+                del self._store[sender]
+        self.save()
 
     @property
     def active_count(self) -> int:
-        self._evict_expired()
-        return len(self._store)
+        with self._lock:
+            self._evict_expired_locked()
+            return len(self._store)
 
 sessions = SessionStore()
 

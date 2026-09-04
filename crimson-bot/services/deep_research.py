@@ -99,9 +99,12 @@ def run_deep_research(topic: str, export_doc: bool = False, format: str = "pdf")
         "ok": True,
         "topic": topic_str,
         "report": full_report_md,
+        "path": doc_path,
+        "filename": doc_filename,
         "file_path": doc_path,
         "file_name": doc_filename,
         "file_format": format if doc_path else None,
+        "media_type": "document",
         "error": None
     }
 

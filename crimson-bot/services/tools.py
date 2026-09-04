@@ -1005,6 +1005,10 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
                 log.warning("[Search] failed for %r: %s", query, exc)
                 search_result = {"ok": False, "error": str(exc), "results": []}
 
+            search_result["instruction"] = (
+                "Synthesize these live search results into your response directly and seamlessly. "
+                "Do NOT say 'I will search for you' or promise to send results later because you are completing the answer right now."
+            )
             messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(search_result)})
 
             if _looks_like_media_search(query):

@@ -1441,6 +1441,20 @@ def route_reply():
         subcommand = parts[2].lower() if len(parts) >= 3 else ""
         arg1 = parts[3].lower() if len(parts) >= 4 else ""
 
+        if not subcommand:
+            return jsonify({"reply": (
+                "👑 *Master Control Dashboard*\n\n"
+                "• master control status_posting [on/off]\n"
+                "• master control status_reply [on/off]\n"
+                "• master control scheduler [on/off]\n"
+                "• master control interval [hours]\n"
+                "• master control status topics / status_now\n"
+                "• master control topic add/remove/clear/list [name]\n"
+                "• master control wipe cache / memory\n"
+                "• master control config\n"
+                "• master control ignore_status [phone/jid] [on/off]"
+            )}), 200
+
         if subcommand in ("status_reply", "status_replying", "replies"):
             allowed = arg1 in ("true", "yes", "on", "1")
             cfg_data["allow_status_reply"] = allowed
@@ -1452,6 +1466,16 @@ def route_reply():
             cfg_data["allow_status_posting"] = allowed
             save_json(CFG_FILE, cfg_data); load_config()
             return jsonify({"reply": f"✅ Status posting {'enabled' if allowed else 'disabled'}."}), 200
+
+        elif subcommand == "ignore_status":
+            target_phone = user_phone
+            toggle_str = arg1
+            if len(parts) >= 5:
+                target_phone = "".join(ch for ch in parts[3] if ch.isdigit()) or parts[3]
+                toggle_str = parts[4].lower()
+            ignore_val = toggle_str in ("true", "yes", "on", "1")
+            profile_mgr.set_ignore_status(target_phone, ignore_val)
+            return jsonify({"reply": f"✅ Status ignore for {target_phone} set to {ignore_val}."}), 200
 
         elif subcommand == "scheduler":
             enabled = arg1 in ("true", "yes", "on", "1")
@@ -1494,7 +1518,9 @@ def route_reply():
                         return jsonify({"reply": f"✅ Topic removed: {topic}"}), 200
             return jsonify({"reply": "⚠️ Usage: master control topic add/remove/clear/list [topic]"}), 200
 
-        elif subcommand == "status_now":
+        elif subcommand in ("status_now", "status"):
+            if subcommand == "status" and arg1 == "topics":
+                return jsonify({"reply": "Topics: " + (", ".join(cfg_data.get("status_scheduler_topics", [])) if cfg_data.get("status_scheduler_topics") else "none")}), 200
             trigger_now()
             return jsonify({"reply": "✅ Status trigger sent."}), 200
 
@@ -1607,7 +1633,7 @@ def route_reply():
 
             return jsonify({"reply": "⚠️ Usage: master control wipe cache  OR  master control wipe memory"}), 200
 
-        return jsonify({"reply": "⚠️ Unknown master control command."}), 200
+        return jsonify({"reply": "⚠️ Unknown master control command. Use `master control` to list all available commands."}), 200
 
     # ── User Status Control Commands ────────────────────────────────────────────
     # Allow users to opt in/out of status replies

@@ -199,11 +199,16 @@ class Reporter:
             body = _format_done(task_id, name, result)
         else:
             body = _format_fail(task_id, name, result)
-        # Deliver the actual file for download tasks: the bridge reads the
+        
+        delivered = False
+        # Deliver the actual file for download/research tasks: the bridge reads the
         # shared filesystem path directly (no base64 over HTTP).
         if status == "done" and isinstance(result, dict):
-            path = result.get("path") or ""
-            log.info("[Reporter] notify done for %s: path=%s ispublic=%s", name, path, result.get("is_public"))
+            path = result.get("path") or result.get("file_path") or ""
+            filename = result.get("filename") or result.get("file_name") or "file"
+            media_type = result.get("media_type") or ("document" if path and any(path.lower().endswith(ext) for ext in ('.pdf', '.docx', '.pptx', '.xlsx', '.txt')) else ("video" if path and path.lower().endswith('.mp4') else "audio"))
+            
+            log.info("[Reporter] notify done for %s: path=%s filename=%s media_type=%s", name, path, filename, media_type)
             if path and not str(path).startswith("http"):
                 import os as _os
                 if _os.path.isfile(path):
@@ -211,33 +216,42 @@ class Reporter:
                     r = bridge_api.bridge_send(
                         jid, body,
                         media_path=path,
-                        media_type=result.get("media_type") or "audio",
-                        filename=result.get("filename") or "file",
+                        media_type=media_type,
+                        filename=filename,
                         timeout=300,
                     )
                     if r.get("ok"):
                         log.info("[Reporter] media delivered for %s: mid=%s", name, r.get("message_id"))
-                        return True
+                        delivered = True
                     else:
                         log.warning("[Reporter] media delivery FAILED for %s: %s", name, r.get("error"))
-                        return False
+                        delivered = False
                 else:
                     log.info("[Reporter] path missing on disk, falling back to text")
-        return self._send_wa(jid, body)
+                    delivered = self._send_wa(jid, body)
+            else:
+                delivered = self._send_wa(jid, body)
+        else:
+            delivered = self._send_wa(jid, body)
+
+        # Sync completed task output into conversation session memory so bot retains track of tasks
+        if delivered:
+            try:
+                from services.memory import sessions
+                sess = sessions.get(jid)
+                sess.add("assistant", body)
+                log.info("[Reporter] Stashed task notification in session memory for %s", jid.split("@")[0])
+            except Exception as exc:
+                log.debug("[Reporter] Failed to update session memory: %s", exc)
+
+        return delivered
 
     def _jid_for_user(self, user_id: str) -> str | None:
-        """Return a valid WhatsApp JID for a user_phone.
-
-        - If user_id already looks like a JID ('xxx@domain'), pass it through.
-        - Otherwise strip non-digits and assume @s.whatsapp.net.
-        Returns None if there's nothing to send to.
-        """
+        """Return a valid WhatsApp JID for a user_phone or JID string."""
         if not user_id:
             return None
         s = str(user_id).strip()
         if "@" in s:
-            # Already a JID. If the domain isn't a WhatsApp domain, leave it
-            # alone — the bridge will reject it if it's truly invalid.
             return s
         digits = "".join(ch for ch in s if ch.isdigit())
         if not digits:
@@ -249,8 +263,8 @@ class Reporter:
 def _format_done(task_id: str, name: str, result) -> str:
     summary = ""
     if isinstance(result, dict):
-        if result.get("filename"):
-            summary = f"\nfile: {result.get('filename')}"
+        if result.get("filename") or result.get("file_name"):
+            summary = f"\nfile: {result.get('filename') or result.get('file_name')}"
         elif result.get("url"):
             summary = f"\nfile: {result.get('filename') or result.get('url')}"
         elif result.get("reply"):
