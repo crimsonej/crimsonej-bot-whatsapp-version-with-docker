@@ -29,6 +29,29 @@ const os   = require('os');
 try { require('dns').setDefaultResultOrder('ipv4first'); } catch (_) {}
 
 const AI_SERVER = process.env.AI_SERVER || 'http://localhost:5000/reply';
+
+// Helper with automatic fallback for DNS (ENOTFOUND) or connection (ECONNREFUSED) failures
+async function postToAIServer(payload, options = {}) {
+    const urls = [AI_SERVER];
+    if (!AI_SERVER.includes('127.0.0.1') && !AI_SERVER.includes('localhost')) {
+        urls.push('http://127.0.0.1:5000/reply');
+        urls.push('http://localhost:5000/reply');
+    }
+    let lastErr = null;
+    for (const url of urls) {
+        try {
+            return await axios.post(url, payload, options);
+        } catch (err) {
+            lastErr = err;
+            if (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED' || (err.message && (err.message.includes('ENOTFOUND') || err.message.includes('ECONNREFUSED')))) {
+                console.warn(`[AI_SERVER] Connection to ${url} failed (${err.code || err.message}), trying fallback...`);
+                continue;
+            }
+            throw err;
+        }
+    }
+    throw lastErr;
+}
 const BOT_NAME  = process.env.BOT_NAME  || 'crimsonej';
 // Use /data (HF persistent storage) when available, otherwise local fallback
 const AUTH_DIR  = process.env.AUTH_DIR  || (fs.existsSync('/data') ? '/data/auth_info_baileys' : 'auth_info_baileys');
@@ -325,7 +348,7 @@ async function startBot() {
                 if (!jid || !messageId) continue;
                 markDeletedMessage(jid, messageId);
                 try {
-                    await axios.post(AI_SERVER, {
+                    await postToAIServer({
                         message: '',
                         deleted: true,
                         message_id: messageId,
@@ -376,7 +399,7 @@ async function startBot() {
                     group_name: jid.endsWith('@g.us') ? jid : null,
                 };
                 console.log('[EDIT] forwarding payload:', JSON.stringify(payload));
-                const res = await axios.post(AI_SERVER, payload, { timeout: 60000 }).catch(err => {
+                const res = await postToAIServer(payload, { timeout: 60000 }).catch(err => {
                     console.error('[EDIT] forward failed:', err.message);
                     return null;
                 });
@@ -407,7 +430,7 @@ async function startBot() {
                 if (key?.fromMe) continue;
                 markDeletedMessage(jid, messageId);
                 try {
-                    await axios.post(AI_SERVER, {
+                    await postToAIServer({
                         message: '',
                         deleted: true,
                         message_id: messageId,
@@ -473,7 +496,7 @@ async function handleMessage(msg) {
         if (text || imageData) {
             console.log(`[STATUS] Received status from ${userPhone}: ${text || '[Image]'}`);
             try {
-                const res = await axios.post(AI_SERVER, {
+                const res = await postToAIServer({
                     message: text || '[Image]',
                     image_base64: imageData,
                     is_status: true,
@@ -604,7 +627,7 @@ let text = m.conversation
                     const editSenderUser = editSender && typeof editSender === 'string' ? editSender.split('@')[0] : '(unknown)';
                     console.log(`[EDIT-DIRECT] jid=${fromUser} from=${editSenderUser} id=${origId} new_text=${JSON.stringify(editText)}`);
                     try {
-                        const res = await axios.post(AI_SERVER, {
+                        const res = await postToAIServer({
                             message: editText,
                             edited: true,
                             message_id: origId,
@@ -664,7 +687,7 @@ let text = m.conversation
                     const editSenderUser = editSender && typeof editSender === 'string' ? editSender.split('@')[0] : '(unknown)';
                     console.log(`[EDIT-UPSERT] jid=${origJidUser} from=${editSenderUser} id=${origId} new_text=${JSON.stringify(editText)}`);
                     try {
-                        const res = await axios.post(AI_SERVER, {
+                        const res = await postToAIServer({
                             message: editText,
                             edited: true,
                             message_id: origId,
@@ -806,7 +829,7 @@ let text = m.conversation
         const userPrompt = text.replace(/^\/read\s*/i, '').trim();
         await sock.sendPresenceUpdate('composing', from).catch(() => {});
         try {
-            const res = await axios.post(AI_SERVER, {
+            const res = await postToAIServer({
                 document:           true,
                 document_data:      docBuf.toString('base64'),
                 document_name:      docName,
@@ -849,7 +872,7 @@ let text = m.conversation
 
         await sock.sendPresenceUpdate('composing', from).catch(() => {});
         try {
-            const res = await axios.post(AI_SERVER, {
+            const res = await postToAIServer({
                 document:           !!lBuf,
                 document_data:      lBuf ? lBuf.toString('base64') : null,
                 document_name:      lName,
@@ -888,7 +911,7 @@ let text = m.conversation
             if (buf) {
                 try {
                     await sock.sendPresenceUpdate('composing', from).catch(() => {});
-                    const res = await axios.post(AI_SERVER, {
+                    const res = await postToAIServer({
                         document:          true,
                         document_data:     buf.toString('base64'),
                         document_name:     fileName,
@@ -926,7 +949,7 @@ let text = m.conversation
         }
         try {
             await sock.sendPresenceUpdate('composing', from).catch(() => {});
-            const res = await axios.post(AI_SERVER, {
+            const res = await postToAIServer({
                 message: text,
                 image_base64: imgBuf.toString('base64'),
                 mime_type: imgMime,
@@ -1034,7 +1057,7 @@ let text = m.conversation
         }, 10000); // Refresh every 10s
 
         try {
-            const res = await axios.post(AI_SERVER, {
+            const res = await postToAIServer({
                 message:        text || '[media]',
                 quoted_message: quotedText || null,
                 reply_to_quoted: replyToQuoted,
