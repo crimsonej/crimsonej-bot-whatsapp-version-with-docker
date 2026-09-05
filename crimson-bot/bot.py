@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import io
 import math
@@ -130,6 +131,18 @@ from services.personality import (
 
 # ── Flask App Setup ──────────────────────────────────────────────────────────
 app = Flask(__name__)
+
+@app.before_request
+def require_internal_api_token():
+    """Protect bot control routes while leaving health probes available."""
+    if request.path == "/health":
+        return None
+    expected = os.getenv("CRIMSON_API_TOKEN", "")
+    supplied = request.headers.get("Authorization", "")
+    provided = supplied[7:].strip() if supplied.startswith("Bearer ") else ""
+    if not expected or not provided or not hmac.compare_digest(provided, expected):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    return None
 _cache: dict[str, str] = load_json(CACHE_FILE, {})
 _BOOT_TIME: float = 0.0
 doc_session: dict[str, Any] = {}  # docs are transient — never restored from disk
@@ -153,12 +166,26 @@ _state_lock = threading.Lock()
 
 from concurrent.futures import ThreadPoolExecutor
 _bg_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="crimson_bg")
+_bg_slots = threading.BoundedSemaphore(3)
 
 def _submit_bg_task(fn, *args, **kwargs):
+    if not _bg_slots.acquire(blocking=False):
+        log.debug("[BG Task] skipped while background workers are saturated")
+        return False
+
+    def run_bounded():
+        try:
+            fn(*args, **kwargs)
+        finally:
+            _bg_slots.release()
+
     try:
-        _bg_executor.submit(fn, *args, **kwargs)
+        _bg_executor.submit(run_bounded)
+        return True
     except Exception as exc:
+        _bg_slots.release()
         log.warning("[BG Task] submission error: %s", exc)
+        return False
 
 # simple in-memory dedupe for raw error notifications: fingerprint -> last_sent_ts
 _error_notify_cache: dict[str, float] = {}
@@ -1918,8 +1945,8 @@ def route_health():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-if __name__ == "__main__":
-    # Start auxiliary background services
+def start_background_services() -> None:
+    """Start auxiliary workers once for the active bot process."""
     try:
         start_dispatcher()
     except Exception as e:
@@ -1952,6 +1979,11 @@ if __name__ == "__main__":
         init_group_intel()
     except Exception as e:
         log.warning("[Boot] Failed to init group intel: %s", e)
+
+
+if __name__ == "__main__":
+    # Start auxiliary background services
+    start_background_services()
         
     port = int(os.environ.get("BOT_PORT") or cfg("port") or 5000)
     log.info("[Boot] Starting Crimsonej AI Server on port %d...", port)

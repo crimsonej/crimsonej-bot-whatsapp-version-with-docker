@@ -125,13 +125,51 @@ def start_services(foreground: bool = False) -> None:
         except KeyboardInterrupt:
             stop_services()
 
+def _kill_process(pid: int, name: str, wait_secs: float = 4.0) -> None:
+    """Send SIGTERM; escalate to SIGKILL if the process hasn't exited after wait_secs."""
+    import time as _time
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return  # Already dead
+
+    deadline = _time.time() + wait_secs
+    while _time.time() < deadline:
+        _time.sleep(0.25)
+        try:
+            os.kill(pid, 0)  # Check still alive
+        except OSError:
+            return  # Exited cleanly
+
+    # Still alive — escalate
+    try:
+        os.kill(pid, signal.SIGKILL)
+        print(f"  ⚡ Force-killed {name} (PID: {pid})")
+    except OSError:
+        pass
+
+
+def _free_port(port: int) -> None:
+    """Best-effort: kill any process still listening on a port (Linux only)."""
+    try:
+        import subprocess as _sub
+        result = _sub.run(
+            ["fuser", "-k", f"{port}/tcp"],
+            capture_output=True, timeout=5
+        )
+        if result.returncode == 0:
+            print(f"  🔓 Freed port {port} via fuser")
+    except Exception:
+        pass  # fuser may not be installed; that is fine
+
+
 def stop_services() -> None:
     print("\033[1;33m🛑 Stopping Crimsonej Services...\033[0m")
     for name, pid_file in [("AI Server", BOT_PID_FILE), ("WhatsApp Bridge", BRIDGE_PID_FILE)]:
         pid = get_pid(pid_file)
         if pid:
             try:
-                os.kill(pid, signal.SIGTERM)
+                _kill_process(pid, name)
                 print(f"  ✓ Stopped {name} (PID: {pid})")
             except OSError as e:
                 print(f"  [ERROR] Failed to stop {name}: {e}")
@@ -139,6 +177,10 @@ def stop_services() -> None:
                 os.remove(pid_file)
         else:
             print(f"  • {name} was not running.")
+
+    # Final safety net: make sure ports are actually free before returning
+    _free_port(5000)
+    _free_port(7860)
 
 def restart_services() -> None:
     print("\033[1;36m♻️  Restarting Crimsonej Services...\033[0m")

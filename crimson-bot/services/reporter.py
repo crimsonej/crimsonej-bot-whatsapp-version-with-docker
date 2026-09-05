@@ -178,9 +178,15 @@ class Reporter:
         import services.bridge_api as bridge_api
         r = bridge_api.bridge_send(jid, text)
         if not r.get("ok"):
-            log.warning("[Reporter] send_wa failed: %s", r.get("error"))
+            err = r.get("error") or "unknown"
+            # bridge_not_connected is transient during QR scanning / reconnect;
+            # suppress WARNING noise — the bridge_silence alert will handle it.
+            if "bridge_not_connected" in str(err) or "not_connected" in str(err):
+                log.debug("[Reporter] send_wa deferred (bridge not ready): %s", jid.split("@")[0])
+                return False
+            log.warning("[Reporter] send_wa failed: %s", err)
             event_log.append("reporter", "alert_send_failed",
-                             summary=f"couldn't deliver to {jid}: {r.get('error')}",
+                             summary=f"couldn't deliver to {jid}: {err}",
                              payload={"jid": jid, "text": text[:120]})
             return False
         return True

@@ -326,7 +326,8 @@ def download_youtube_sync(url: str, media_type: str = "audio", retries: int = 2,
     LAST_DL_ERROR = "Download in progress..."
 
     temp_id = f"{int(time.time()*1000)}_{random.randint(1000, 9999)}"
-    temp_dir = "/dev/shm" if os.path.isdir("/dev/shm") else "/tmp"
+    temp_dir = os.environ.get("MEDIA_ROOT") or ("/dev/shm" if os.path.isdir("/dev/shm") else "/tmp")
+    os.makedirs(temp_dir, exist_ok=True)
     prefix = f"song_{temp_id}---"
     out_template = os.path.join(temp_dir, f"{prefix}%(title)s.%(ext)s")
 

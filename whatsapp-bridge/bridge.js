@@ -24,6 +24,7 @@ const { Boom } = require('@hapi/boom');
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
+const crypto = require('crypto');
 
 // Prefer IPv4 addresses first to avoid TLS errors on hosts with unroutable IPv6
 try { require('dns').setDefaultResultOrder('ipv4first'); } catch (_) {}
@@ -32,6 +33,8 @@ const AI_SERVER = process.env.AI_SERVER || 'http://localhost:5000/reply';
 
 // Helper with automatic fallback for DNS (ENOTFOUND) or connection (ECONNREFUSED) failures
 async function postToAIServer(payload, options = {}) {
+    options.timeout = options.timeout || 90000;
+    options.headers = { ...(options.headers || {}), ...(process.env.CRIMSON_API_TOKEN ? { Authorization: `Bearer ${process.env.CRIMSON_API_TOKEN}` } : {}) };
     const urls = [AI_SERVER];
     if (!AI_SERVER.includes('127.0.0.1') && !AI_SERVER.includes('localhost')) {
         urls.push('http://127.0.0.1:5000/reply');
@@ -55,6 +58,25 @@ async function postToAIServer(payload, options = {}) {
 const BOT_NAME  = process.env.BOT_NAME  || 'crimsonej';
 // Use /data (HF persistent storage) when available, otherwise local fallback
 const AUTH_DIR  = process.env.AUTH_DIR  || (fs.existsSync('/data') ? '/data/auth_info_baileys' : 'auth_info_baileys');
+const API_TOKEN = process.env.BRIDGE_API_TOKEN || process.env.CRIMSON_API_TOKEN || '';
+const MEDIA_ROOT = path.resolve(process.env.MEDIA_ROOT || (fs.existsSync('/data') ? '/data/media' : path.join(os.tmpdir(), 'crimsonej-media')));
+const MAX_REQUEST_BYTES = 10 * 1024 * 1024;
+const RATE_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT = 60;
+const requestRates = new Map();
+
+function authorized(req) {
+    if (!API_TOKEN) return false;
+    const header = req.headers.authorization || '';
+    const supplied = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    return supplied.length === API_TOKEN.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(API_TOKEN));
+}
+
+function safeMediaPath(candidate) {
+    if (typeof candidate !== 'string' || !candidate) return null;
+    const resolved = path.resolve(candidate);
+    return resolved === MEDIA_ROOT || resolved.startsWith(`${MEDIA_ROOT}${path.sep}`) ? resolved : null;
+}
 
 let sock = null;
 let reconnectCount = 0;
@@ -91,7 +113,12 @@ class PerJidQueueManager {
             this.queues.set(jid, []);
         }
         return new Promise((resolve, reject) => {
-            this.queues.get(jid).push({ taskFn, resolve, reject });
+            const queue = this.queues.get(jid);
+            if (queue.length >= 2) {
+                const superseded = queue.shift();
+                superseded.resolve(null);
+            }
+            queue.push({ taskFn, resolve, reject });
             this._processNext(jid);
         });
     }
@@ -163,10 +190,21 @@ function clearStaleDeleteCache() {
 
 async function instrumentedSend(jid, content, options) {
     try {
-        if (!sock || !sock.user) {
+        // Guard: socket must exist, be open, and have completed authentication.
+        // Baileys internally calls creds.me.id when building the message key —
+        // if that is undefined the error "Cannot read properties of undefined
+        // (reading 'id')" is thrown. Catching it here produces a clear, actionable
+        // error string instead of a cryptic stack trace.
+        if (!sock) {
+            throw new Error("bridge_not_connected");
+        }
+        if (!sock.user || !sock.user.id) {
             throw new Error("bridge_not_connected");
         }
         const targetJid = outboundJid(jid) || jid;
+        if (!targetJid || !targetJid.includes('@')) {
+            throw new Error(`invalid_jid:${String(jid)}`);
+        }
         const res = await sock.sendMessage(targetJid, content, options);
         sendCount++;
         lastSendAt = Date.now();
@@ -300,15 +338,17 @@ async function startBot() {
     // ── Incoming messages ────────────────────────────────────────────────────
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
+        const pending = [];
         for (const msg of messages) {
             receiveCount++;
             const mtype = msg.message && Object.keys(msg.message)[0] || 'unknown';
             const jid = msg.key?.remoteJid || 'global';
             recordEvent('receive', `${mtype} from ${jid.split('@')[0]}`);
-            await messageQueue.enqueue(jid, () => handleMessage(msg)).catch(err =>
+            pending.push(messageQueue.enqueue(jid, () => handleMessage(msg)).catch(err =>
                 console.error('[BRIDGE] Handler error:', err.message)
-            );
+            ));
         }
+        await Promise.allSettled(pending);
     });
 
     // ── Incoming message EDITS / REVOKES ─────────────────────────────────────
@@ -1069,12 +1109,15 @@ let text = m.conversation
                 group_name:     isGroup ? from : null,
                 bot_id:         botNum,
                 bot_lid:        botLid
-            }, { timeout: 180000 });
+            }, { timeout: 90000 });
             
             console.log('[BRIDGE] AI response status:', res.status, 'keys:', Object.keys(res.data || {}));
             await sendAIResponse(msg, from, res, quotedFake, quotedSender);
         } catch (e) {
             console.error('[BRIDGE] AI error:', e.message, e.code || '', e.response?.status || '');
+            await sock.sendMessage(outboundJid(from) || from, {
+                text: "I hit a snag getting that answer. Try again in a moment."
+            }).catch(() => {});
         } finally {
             if (typingInterval) clearInterval(typingInterval);
         }
@@ -1275,7 +1318,12 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
                 jid: sendJid,
                 message_ids: sentMessageIds,
                 sent_text: sentText
-            }, { timeout: 3000 });
+            }, {
+                timeout: 3000,
+                headers: process.env.CRIMSON_API_TOKEN
+                    ? { Authorization: `Bearer ${process.env.CRIMSON_API_TOKEN}` }
+                    : {},
+            });
         } catch (e) {
             // Best-effort: self-correction disabled if Flask unreachable
             console.debug('[SENT_IDS] POST failed:', e.message);
@@ -1290,13 +1338,44 @@ const http = require('http');
 http.createServer((req, res) => {
     req.setTimeout(300000);
     res.setTimeout(300000);
+    if (req.url !== '/health/full' && !authorized(req)) {
+        res.writeHead(API_TOKEN ? 401 : 503, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: API_TOKEN ? 'unauthorized' : 'bridge_api_token_not_configured' }));
+    }
+    const now = Date.now();
+    const rateKey = req.socket.remoteAddress || 'unknown';
+    const rate = requestRates.get(rateKey) || { startedAt: now, count: 0 };
+    if (now - rate.startedAt >= RATE_WINDOW_MS) {
+        rate.startedAt = now;
+        rate.count = 0;
+    }
+    rate.count += 1;
+    requestRates.set(rateKey, rate);
+    if (rate.count > RATE_LIMIT) {
+        res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+        return res.end(JSON.stringify({ ok: false, error: 'rate_limited' }));
+    }
+    const declaredLength = Number(req.headers['content-length'] || 0);
+    if (declaredLength > MAX_REQUEST_BYTES) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, error: 'request_too_large' }));
+    }
+    let receivedBytes = 0;
+    req.on('data', chunk => {
+        receivedBytes += chunk.length;
+        if (receivedBytes > MAX_REQUEST_BYTES && !res.headersSent) {
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'request_too_large' }));
+            req.destroy();
+        }
+    });
     if (req.method === 'POST' && req.url === '/send_message') {
         let body = '';
         req.on('data', chunk => body += chunk.toString());
         req.on('end', async () => {
             try {
                 const { jid, text, path: mediaPath, media_type, filename } = JSON.parse(body);
-                if (!sock) {
+                if (!sock || !sock.user || !sock.user.id) {
                     res.writeHead(503, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
                 }
@@ -1307,8 +1386,17 @@ http.createServer((req, res) => {
                 const target = normalizeJid(jid) || jid;
                 let sent_key = null;
                 try {
-                    if (mediaPath && fs.existsSync(mediaPath)) {
-                        const buf = fs.readFileSync(mediaPath);
+                    const safePath = safeMediaPath(mediaPath);
+                    if (mediaPath && !safePath) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        return res.end(JSON.stringify({ ok: false, error: 'media_path_outside_sandbox' }));
+                    }
+                    if (safePath && fs.existsSync(safePath)) {
+                        const buf = fs.readFileSync(safePath);
+                        if (buf.length > 50 * 1024 * 1024) {
+                            res.writeHead(413, { 'Content-Type': 'application/json' });
+                            return res.end(JSON.stringify({ ok: false, error: 'media_too_large' }));
+                        }
                         const mtype = (media_type || 'audio').toLowerCase();
                         let content;
                         if (mtype === 'video') content = { video: buf, mimetype: 'video/mp4', fileName: filename || 'video.mp4', caption: '🎬' };
@@ -1336,7 +1424,7 @@ http.createServer((req, res) => {
                                 }
                             }
                         }
-                        fs.unlink(mediaPath, () => {});
+                        fs.unlink(safePath, () => {});
                     } else {
                         const r = await instrumentedSend(target, { text });
                         sent_key = r && r.key;

@@ -980,10 +980,33 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
 
     for tool_call in tool_calls:
         name = tool_call.function.name
+        raw_arguments = tool_call.function.arguments or "{}"
+        if not isinstance(raw_arguments, str) or len(raw_arguments) > 64 * 1024:
+            messages.append({
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": name,
+                "content": json.dumps({"ok": False, "error": "tool_arguments_too_large"}),
+            })
+            continue
         try:
-            args = json.loads(tool_call.function.arguments)
-        except Exception:
-            args = {}
+            args = json.loads(raw_arguments)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            messages.append({
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": name,
+                "content": json.dumps({"ok": False, "error": "invalid_tool_arguments"}),
+            })
+            continue
+        if not isinstance(args, dict):
+            messages.append({
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": name,
+                "content": json.dumps({"ok": False, "error": "tool_arguments_must_be_object"}),
+            })
+            continue
 
         log.info("[Tool Call] Executing %s with args %s", name, args)
 
@@ -1139,11 +1162,10 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
                         log.error("[Tool] Failed to read/remove generated image status: %s", e)
 
             try:
-                requests.post("http://127.0.0.1:7860/post_status", json={
-                    "text": text,
-                    "media_base64": media_base64,
-                    "mimetype": mimetype
-                }, timeout=10)
+                from services.bridge_api import bridge_post_status
+                result = bridge_post_status(text, media_base64, mimetype, timeout=10)
+                if not result.get("ok"):
+                    raise RuntimeError(result.get("error") or "bridge rejected status")
                 messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Success"})
             except Exception as e:
                 log.error("[Tool] post_status failed: %s", e)

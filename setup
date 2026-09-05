@@ -1,239 +1,222 @@
 #!/usr/bin/env python3
-"""
-setup · Interactive Configuration Wizard for Crimsonej
-"""
+"""Navigable interactive configuration wizard for Crimsonej."""
 
 import json
 import os
+import secrets
 import sys
 import urllib.request
+from getpass import getpass
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_DIR = os.path.join(ROOT_DIR, "crimson-bot")
 BRIDGE_DIR = os.path.join(ROOT_DIR, "whatsapp-bridge")
+DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+CHAT_WORDS = ("instruct", "chat", "versatile", "nemotron", "mistral", "compound", "gpt-oss")
+SKIP_WORDS = ("whisper", "embed", "guard", "rerank", "bge-", "fuyu", "neva", "kosmos", "parakeet", "canary", "starcoder", "codestral")
 
-# Keywords that indicate a model is useful for chat/instruct tasks
-_CHAT_KEYWORDS = ["instruct", "chat", "versatile", "nemotron", "mistral", "compound", "gpt-oss"]
-# Keywords for models that are NOT chat models (TTS, embedding, guard, whisper, etc.)
-_SKIP_KEYWORDS = ["whisper", "embed", "guard", "rerank", "bge-", "fuyu", "neva", "kosmos",
-                  "parakeet", "canary", "starcoder", "codestral", "nv-rerankqa",
-                  "orpheus", "sea-lion", "yi-large", "allam"]
 
-def print_header(title):
-    print(f"\n\033[1;36m=== {title} ===\033[0m")
+def header(title):
+    print(f"\n\033[1;36m--- {title} ---\033[0m")
 
-def prompt_input(label, default=""):
+
+def ask(label, default=""):
     suffix = f" [{default}]" if default else ""
-    val = input(f"  {label}{suffix}: ").strip()
-    return val if val else default
+    value = input(f"  {label}{suffix}: ").strip()
+    return value or default
 
 
-def fetch_models(nv_key: str, groq_key: str) -> list[tuple[str, str]]:
-    """Fetch available chat/instruct models from NVIDIA and Groq APIs.
-    Returns list of (model_id, provider) tuples, best models first."""
-    models: list[tuple[str, str]] = []
+def secret(label, current=""):
+    state = "configured" if current else "not set"
+    value = getpass(f"  {label} [{state}] (Enter keeps current): ").strip()
+    return current if not value else value
 
-    # ── NVIDIA NIM models ────────────────────────────────────────────────────
-    if nv_key:
-        print("  ⏳ Fetching NVIDIA models...", end="", flush=True)
+
+def read_env(path):
+    values = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    values[key] = value
+    except OSError:
+        pass
+    return values
+
+
+def write_env(path, values):
+    with open(path, "w", encoding="utf-8") as fh:
+        for key, value in values.items():
+            if value != "":
+                fh.write(f"{key}={value}\n")
+    os.chmod(path, 0o600)
+
+
+def port(label, current):
+    while True:
+        value = ask(label, str(current))
         try:
-            req = urllib.request.Request(
-                "https://integrate.api.nvidia.com/v1/models",
-                headers={"Authorization": f"Bearer {nv_key}"}
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            all_ids = sorted(m["id"] for m in data.get("data", []) if "id" in m)
+            result = int(value)
+            if 1 <= result <= 65535:
+                return result
+        except ValueError:
+            pass
+        print("  Use a port from 1 to 65535.")
 
-            # Filter to chat/instruct models, skip non-chat utilities
-            for mid in all_ids:
-                ml = mid.lower()
-                if any(s in ml for s in _SKIP_KEYWORDS):
-                    continue
-                if any(k in ml for k in _CHAT_KEYWORDS):
-                    models.append((mid, "NVIDIA"))
 
-            # Add remaining models that passed skip filter but not chat filter
-            # (user might want them via "show all")
-            print(f" ✅ ({len(models)} chat models found)")
-        except Exception as e:
-            print(f" ❌ ({e})")
-
-    # ── Groq models ──────────────────────────────────────────────────────────
-    if groq_key:
-        print("  ⏳ Fetching Groq models...", end="", flush=True)
-        groq_count = 0
+def fetch_models(nvidia_key, groq_key):
+    models = []
+    sources = (
+        ("NVIDIA", nvidia_key, "https://integrate.api.nvidia.com/v1/models"),
+        ("Groq", groq_key, "https://api.groq.com/openai/v1/models"),
+    )
+    for provider, key, url in sources:
+        if not key:
+            continue
+        print(f"  Fetching {provider} models...", end="", flush=True)
         try:
-            req = urllib.request.Request(
-                "https://api.groq.com/openai/v1/models",
-                headers={"Authorization": f"Bearer {groq_key}"}
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            all_ids = sorted(m["id"] for m in data.get("data", []) if "id" in m)
-
-            for mid in all_ids:
-                ml = mid.lower()
-                if any(s in ml for s in _SKIP_KEYWORDS):
-                    continue
-                if any(k in ml for k in _CHAT_KEYWORDS):
-                    if not any(x[0] == mid for x in models):
-                        models.append((mid, "Groq"))
-                        groq_count += 1
-            print(f" ✅ ({groq_count} chat models found)")
-        except Exception as e:
-            print(f" ❌ ({e})")
-
-    # ── Sort: recommended models first (working free-tier models only) ─────────
-    _PRIORITY = [
-        "meta/llama-3.2-90b-vision-instruct",
-        "nv-mistralai/mistral-nemo-12b-instruct",
-        "mistralai/mistral-large-2-instruct",
-        "mistralai/mistral-large",
-        "llama-3.3-70b-versatile",
-    ]
-    def sort_key(item):
-        mid = item[0]
-        if mid in _PRIORITY:
-            return (0, _PRIORITY.index(mid))
-        return (1, mid)
-    models.sort(key=sort_key)
-
+            request = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
+            with urllib.request.urlopen(request, timeout=10) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            found = []
+            for item in data.get("data", []):
+                model_id = item.get("id", "")
+                lowered = model_id.lower()
+                if model_id and any(word in lowered for word in CHAT_WORDS) and not any(word in lowered for word in SKIP_WORDS):
+                    found.append((model_id, provider))
+            models.extend(found)
+            print(f" ok ({len(found)} models)")
+        except Exception as exc:
+            print(f" unavailable ({exc})")
+    priority = ["meta/llama-3.2-90b-vision-instruct", "nv-mistralai/mistral-nemo-12b-instruct", "llama-3.3-70b-versatile"]
+    models.sort(key=lambda item: (priority.index(item[0]) if item[0] in priority else len(priority), item[0]))
     return models
 
 
-def main():
-    print("\033[1;32m⚙️  Crimsonej Configuration Wizard\033[0m")
-    print("  Configure your provider API keys and runtime parameters.\n")
+def choose_model(settings):
+    models = fetch_models(settings["nvidia_key"], settings["groq_key"])
+    if not models:
+        return ask("Model ID", settings["model"])
+    print("\n  Available chat models:")
+    shown = models[:15]
+    for index, (model_id, provider) in enumerate(shown, 1):
+        print(f"  {index:>2}. [{provider}] {model_id}")
+    choice = ask("Model number or custom model ID", "1")
+    if choice.isdigit() and 1 <= int(choice) <= len(shown):
+        return shown[int(choice) - 1][0]
+    return choice
 
-    # Interactive inputs or non-interactive flag check
-    is_non_interactive = "--non-interactive" in sys.argv
 
-    if is_non_interactive:
-        nv_key = os.getenv("NVIDIA_API_KEY", "")
-        groq_key = os.getenv("GROQ_API_KEY", "")
-        hf_key = os.getenv("HF_API_KEY", "")
-        bot_port = os.getenv("BOT_PORT", "5000")
-        creator_phone = os.getenv("CREATOR_PHONE", "")
-        active_model = os.getenv("MODEL", "meta/llama-3.2-90b-vision-instruct")
-    else:
-        print_header("API Keys Configuration")
-        nv_key = prompt_input("NVIDIA API Key (Preferred for LLM, Vision, TTS & Flux 2)", os.getenv("NVIDIA_API_KEY", ""))
-        groq_key = prompt_input("Groq API Key (Secondary Fallback)", os.getenv("GROQ_API_KEY", ""))
-        hf_key = prompt_input("HuggingFace API Key (Optional)", os.getenv("HF_API_KEY", ""))
+def configure_providers(settings):
+    header("Provider Keys")
+    settings["nvidia_key"] = secret("NVIDIA API key", settings["nvidia_key"])
+    settings["groq_key"] = secret("Groq API key", settings["groq_key"])
+    settings["hf_key"] = secret("HuggingFace API key", settings["hf_key"])
+    print("  Keys updated. They will be stored in crimson-bot/.env only.")
 
-        # ── Dynamic AI Model Selection ───────────────────────────────────────
-        print_header("AI Model Selection")
-        available = fetch_models(nv_key, groq_key)
 
-        if available:
-            print()
-            PAGE_SIZE = 15
-            page = 0
-            total_pages = (len(available) + PAGE_SIZE - 1) // PAGE_SIZE
-            active_model = None
+def configure_runtime(settings):
+    header("Runtime")
+    mode = ask("Deployment mode (local/docker)", settings["mode"]).lower()
+    while mode not in {"local", "docker"}:
+        print("  Choose local or docker.")
+        mode = ask("Deployment mode (local/docker)", settings["mode"]).lower()
+    settings["mode"] = mode
+    settings["bot_port"] = port("Python bot port", settings["bot_port"])
+    settings["bridge_port"] = port("WhatsApp bridge port", settings["bridge_port"])
 
-            while active_model is None:
-                start = page * PAGE_SIZE
-                end = min(start + PAGE_SIZE, len(available))
-                for i in range(start, end):
-                    mid, provider = available[i]
-                    tag = f"\033[33m[{provider}]\033[0m"
-                    star = " ⭐" if i < 3 else ""
-                    print(f"  {i + 1:>3}. {tag} {mid}{star}")
 
-                if total_pages > 1:
-                    print(f"\n  Page {page + 1}/{total_pages}", end="")
-                    if page < total_pages - 1:
-                        print("  |  Type 'n' for next page", end="")
-                    if page > 0:
-                        print("  |  Type 'p' for previous page", end="")
-                    print()
+def save(settings):
+    bot_host = "crimson-bot" if settings["mode"] == "docker" else "127.0.0.1"
+    bridge_host = "whatsapp-bridge" if settings["mode"] == "docker" else "127.0.0.1"
+    owner = settings["creator_phone"]
+    owner_jid = f"{owner}@s.whatsapp.net" if owner and "@" not in owner else owner
 
-                choice = prompt_input(f"Select model (1-{len(available)}) or enter custom model ID", "1")
+    write_env(os.path.join(BOT_DIR, ".env"), {
+        "BOT_PORT": settings["bot_port"],
+        "BRIDGE_BASE_URL": f"http://{bridge_host}:{settings['bridge_port']}",
+        "MODEL": settings["model"],
+        "CRIMSON_API_TOKEN": settings["api_token"],
+        "NVIDIA_API_KEY": settings["nvidia_key"],
+        "GROQ_API_KEY": settings["groq_key"],
+        "HF_API_KEY": settings["hf_key"],
+        "CREATOR_PHONE": settings["creator_phone"],
+    })
+    write_env(os.path.join(BRIDGE_DIR, ".env"), {
+        "PORT": settings["bridge_port"],
+        "AI_SERVER": f"http://{bot_host}:{settings['bot_port']}/reply",
+        "BOT_NAME": "crimsonej",
+        "CRIMSON_API_TOKEN": settings["api_token"],
+    })
 
-                if choice.lower() == "n" and page < total_pages - 1:
-                    page += 1
-                    continue
-                elif choice.lower() == "p" and page > 0:
-                    page -= 1
-                    continue
-                elif choice.isdigit():
-                    idx = int(choice) - 1
-                    if 0 <= idx < len(available):
-                        active_model = available[idx][0]
-                    else:
-                        print("  ⚠️  Invalid selection, try again.")
-                else:
-                    # Treat as custom model ID
-                    active_model = choice.strip()
-
-            print(f"\n  ✅ Selected: \033[1;32m{active_model}\033[0m")
-        else:
-            print("  ⚠️  Could not fetch models from any provider.")
-            active_model = prompt_input("Enter model ID manually", "meta/llama-3.2-90b-vision-instruct")
-
-        print_header("Network & Identity")
-        bot_port = prompt_input("Python Bot Port", "5000")
-        creator_phone = prompt_input("Creator WhatsApp Phone Number (e.g. 2567...)")
-
-    # 1. Update crimson-bot/.env
-    bot_env_path = os.path.join(BOT_DIR, ".env")
-    with open(bot_env_path, "w", encoding="utf-8") as f:
-        f.write(f"BOT_PORT={bot_port}\n")
-        f.write(f"MODEL={active_model}\n")
-        if nv_key: f.write(f"NVIDIA_API_KEY={nv_key}\n")
-        if groq_key: f.write(f"GROQ_API_KEY={groq_key}\n")
-        if hf_key: f.write(f"HF_API_KEY={hf_key}\n")
-        if creator_phone: f.write(f"CREATOR_PHONE={creator_phone}\n")
-    os.chmod(bot_env_path, 0o600)
-    print(f"\n  ✓ Updated {bot_env_path}")
-
-    # 2. Update whatsapp-bridge/.env
-    bridge_env_path = os.path.join(BRIDGE_DIR, ".env")
-    with open(bridge_env_path, "w", encoding="utf-8") as f:
-        f.write(f"AI_SERVER=http://localhost:{bot_port}/reply\n")
-        f.write(f"BOT_NAME=crimsonej\n")
-    os.chmod(bridge_env_path, 0o600)
-    print(f"  ✓ Updated {bridge_env_path}")
-
-    # 3. Update crimson-bot/config.json
-    cfg_path = os.path.join(BOT_DIR, "config.json")
-
-    # Determine provider of the selected model and build a sensible fallback chain.
-    # The models array must always use working, non-deprecated model IDs.
-    _is_groq = groq_key and ("versatile" in active_model or "groq" in active_model.lower())
-    selected_provider = "groq" if _is_groq else "nvidia"
-
-    # Scout fallback: use mistral-nemo for NVIDIA primary, groq versatile for Groq primary
-    if selected_provider == "nvidia":
-        scout_model = {"id": "nv-mistralai/mistral-nemo-12b-instruct", "provider": "nvidia", "tier": "scout"}
-    else:
-        scout_model = {"id": "meta/llama-3.2-90b-vision-instruct", "provider": "nvidia", "tier": "scout"}
-
-    cfg_data = {
-        "providers": {
-            "nvidia": nv_key,
-            "groq": groq_key,
-            "huggingface": hf_key
-        },
+    provider = "groq" if settings["groq_key"] and ("versatile" in settings["model"] or "groq" in settings["model"].lower()) else "nvidia"
+    scout = "nvidia/nemotron-3.5-lightning-30b-a3b" if provider == "nvidia" else DEFAULT_MODEL
+    config = {
+        "providers": {"nvidia": "", "groq": "", "huggingface": ""},
         "models": [
-            {"id": active_model, "provider": selected_provider, "tier": "primary"},
-            scout_model,
-            {"id": "llama-3.3-70b-versatile", "provider": "groq", "tier": "fallback"}
+            {"id": settings["model"], "provider": provider, "tier": "primary"},
+            {"id": scout, "provider": "nvidia", "tier": "scout"},
+            {"id": "llama-3.3-70b-versatile", "provider": "groq", "tier": "fallback"},
         ],
-        "active_model": active_model,
-        "port": int(bot_port),
+        "active_model": settings["model"],
+        "port": settings["bot_port"],
+        "owner_jid": owner_jid,
         "relevance_threshold": 0.08,
-        "session_ttl": 1800
+        "session_ttl": 1800,
     }
-    with open(cfg_path, "w", encoding="utf-8") as f:
-        json.dump(cfg_data, f, indent=2)
-    print(f"  ✓ Updated {cfg_path} (Active Model: {active_model})")
+    with open(os.path.join(BOT_DIR, "config.json"), "w", encoding="utf-8") as fh:
+        json.dump(config, fh, indent=2)
 
-    print("\n\033[1;32m✨ Setup Completed Successfully! ✨\033[0m")
-    print("You can now start the bot using: \033[1m./crimsonej start\033[0m\n")
+
+def menu(settings):
+    while True:
+        header("Crimsonej Setup")
+        print(f"  1. Provider keys   {'ready' if any((settings['nvidia_key'], settings['groq_key'], settings['hf_key'])) else 'not configured'}")
+        print(f"  2. AI model        {settings['model']}")
+        print(f"  3. Runtime         {settings['mode']} | bot {settings['bot_port']} | bridge {settings['bridge_port']}")
+        print(f"  4. Identity        {settings['creator_phone'] or 'not set'}")
+        print("  5. Save and exit")
+        print("  6. Exit without saving")
+        choice = input("\n  Select a section [1-6]: ").strip().lower()
+        if choice == "1":
+            configure_providers(settings)
+        elif choice == "2":
+            header("AI Model")
+            settings["model"] = choose_model(settings)
+        elif choice == "3":
+            configure_runtime(settings)
+        elif choice == "4":
+            header("Identity")
+            settings["creator_phone"] = ask("Creator WhatsApp phone", settings["creator_phone"])
+        elif choice == "5":
+            save(settings)
+            print("\n  Saved. Run `crimsonej start` to launch the bot.\n")
+            return
+        elif choice == "6":
+            print("\n  Nothing was changed.\n")
+            return
+        else:
+            print("  Choose 1-6.")
+
+
+def main():
+    bot_values = read_env(os.path.join(BOT_DIR, ".env"))
+    bridge_values = read_env(os.path.join(BRIDGE_DIR, ".env"))
+    settings = {
+        "nvidia_key": bot_values.get("NVIDIA_API_KEY", os.getenv("NVIDIA_API_KEY", "")),
+        "groq_key": bot_values.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY", "")),
+        "hf_key": bot_values.get("HF_API_KEY", os.getenv("HF_API_KEY", "")),
+        "model": bot_values.get("MODEL", os.getenv("MODEL", DEFAULT_MODEL)),
+        "mode": os.getenv("DEPLOY_MODE", "local"),
+        "bot_port": int(bot_values.get("BOT_PORT", os.getenv("BOT_PORT", "5000"))),
+        "bridge_port": int(bridge_values.get("PORT", os.getenv("PORT", "7860"))),
+        "creator_phone": bot_values.get("CREATOR_PHONE", ""),
+        "api_token": bot_values.get("CRIMSON_API_TOKEN", bridge_values.get("CRIMSON_API_TOKEN", "")) or secrets.token_urlsafe(32),
+    }
+    menu(settings)
+
 
 if __name__ == "__main__":
     main()
-

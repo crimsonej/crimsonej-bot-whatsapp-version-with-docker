@@ -305,7 +305,7 @@ def generate_sticker_auto(prompt: str) -> str | None:
     ]
 
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
         with open(webp_path, 'rb') as f:
             b64_data = base64.b64encode(f.read()).decode('utf-8')
         if os.path.exists(img_path): os.remove(img_path)

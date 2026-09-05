@@ -73,6 +73,7 @@ WORKDIR /data
 ENV NODE_ENV=production \
     PORT=7860 \
     AUTH_DIR=/data/auth_info_baileys \
+    MEDIA_ROOT=/media \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false
 
 EXPOSE 7860

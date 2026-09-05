@@ -12,6 +12,7 @@ import random
 import time
 import re
 import os
+import threading
 from functools import lru_cache
 
 from openai import OpenAI as NvidiaOpenAI
@@ -20,11 +21,15 @@ import tiktoken
 from core.config import cfg, get_nvidia_key, log
 
 # Model constants — verified active on NVIDIA NIM API 2026-08-31
-NVIDIA_BRAIN = "meta/llama-3.2-90b-vision-instruct"      # Primary 90B Llama 3.2 Flagship
-NVIDIA_SCOUT = "meta/llama-3.2-11b-vision-instruct"      # Fast 11B Vision Scout (free-tier compatible)
+NVIDIA_BRAIN = "nvidia/nemotron-3-super-120b-a12b"       # Strong general reasoning/chat model
+NVIDIA_SCOUT = "nvidia/nemotron-3.5-lightning-30b-a3b"   # Fast MoE model for background work
 
 nvidia_client: NvidiaOpenAI | None = None
 _client_cache: dict[str, NvidiaOpenAI] = {}
+_circuit_lock = threading.Lock()
+_circuit_state: dict[str, dict[str, float | int]] = {}
+_CIRCUIT_FAILURE_LIMIT = 3
+_CIRCUIT_COOLDOWN_SECONDS = 30.0
 
 PROVIDER_BASE_URLS = {
     "nvidia": "https://integrate.api.nvidia.com/v1",
@@ -53,8 +58,6 @@ PROVIDER_ENV_KEYS = {
 def init_clients() -> None:
     global nvidia_client
     nvidia_client = _client_for_provider("nvidia")
-
-init_clients()
 
 # ── Token-based Truncation ───────────────────────────────────────────────────
 
@@ -140,6 +143,35 @@ def _client_for_provider(provider: str) -> NvidiaOpenAI | None:
         return None
 
 
+init_clients()
+
+
+def _provider_is_open(provider: str) -> bool:
+    with _circuit_lock:
+        state = _circuit_state.get(provider, {})
+        opened_until = float(state.get("opened_until", 0))
+        if opened_until and time.monotonic() >= opened_until:
+            state["opened_until"] = 0
+            state["failures"] = 0
+            return False
+        return opened_until > time.monotonic()
+
+
+def _provider_succeeded(provider: str) -> None:
+    with _circuit_lock:
+        _circuit_state[provider] = {"failures": 0, "opened_until": 0}
+
+
+def _provider_failed(provider: str) -> None:
+    with _circuit_lock:
+        state = _circuit_state.setdefault(provider, {"failures": 0, "opened_until": 0})
+        failures = int(state.get("failures", 0)) + 1
+        state["failures"] = failures
+        if failures >= _CIRCUIT_FAILURE_LIMIT:
+            state["opened_until"] = time.monotonic() + _CIRCUIT_COOLDOWN_SECONDS
+            log.warning("[Brain] circuit opened for %s for %.0fs", provider, _CIRCUIT_COOLDOWN_SECONDS)
+
+
 def _infer_provider(model: str) -> str:
     m = (model or "").lower()
     if m.startswith("gpt-") or m.startswith("o1") or m.startswith("o3") or m.startswith("o4"):
@@ -200,9 +232,10 @@ def _call_provider(provider: str, messages: list, tools: list | None = None,
     # Sanitize model string: map deprecated or enterprise-only function IDs to working endpoints
     if provider == "nvidia":
         m_lower = (model or "").lower()
-        if any(s in m_lower for s in ["scout", "11b", "8b", "nemo", "mistral-7b"]):
+        if (any(s in m_lower for s in ["scout", "11b", "8b", "mistral-7b"])
+            or m_lower in {"nv-mistralai/mistral-nemo-12b-instruct", "nvidia/mistral-nemo-minitron-8b-8k-instruct"}):
             model = NVIDIA_SCOUT
-        elif not model or any(d in m_lower for d in ["llama-3.3", "llama-3.1", "nemotron", "versatile"]):
+        elif not model or any(d in m_lower for d in ["llama-3.3", "llama-3.1", "versatile"]):
             model = NVIDIA_BRAIN
 
     payload = {
@@ -212,6 +245,9 @@ def _call_provider(provider: str, messages: list, tools: list | None = None,
         "max_tokens": max_tokens,
         "timeout": timeout,
     }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
     return client.chat.completions.create(**payload)
 
 
@@ -220,7 +256,7 @@ def _call_nvidia(messages: list, tools: list | None = None, model: str = NVIDIA_
 
 def call_llm(messages: list[dict[str, str]], tools: list | None = None, tool_executor_fn=None,
              user_id: str | None = None, sender_jid: str | None = None,
-             max_tokens: int = 1024, timeout: float = 18.0) -> dict:
+             max_tokens: int = 1024, timeout: float = 35.0) -> dict:
     """
     Unified multi-provider LLM calling function.
     Pipeline: NVIDIA 70B (primary) -> NVIDIA 8B (scout).
@@ -232,6 +268,9 @@ def call_llm(messages: list[dict[str, str]], tools: list | None = None, tool_exe
     for candidate in _model_candidates(primary_model):
         provider = candidate["provider"]
         model = candidate["model"]
+        if _provider_is_open(provider):
+            log.info("[Brain] skipping open circuit for %s", provider)
+            continue
         if not _client_for_provider(provider):
             continue
         try:
@@ -251,16 +290,28 @@ def call_llm(messages: list[dict[str, str]], tools: list | None = None, tool_exe
                 # If tool executor already prepared a complete reply (menu, search results, etc.),
                 # use it directly without calling scout for synthesis.
                 if tool_results.get("reply"):
+                    _provider_succeeded(provider)
                     return tool_results
                 final = _call_provider(provider, messages, tools=None, model=model, max_tokens=min(max_tokens, 768), timeout=min(timeout, 15.0))
                 content = final.choices[0].message.content or ""
+                _provider_succeeded(provider)
                 return {"reply": _strip_think(_sanitize_tool_reply(content)), **tool_results}
 
             content = brain_msg.content or ""
             cleaned = _sanitize_tool_reply(content)
+            _provider_succeeded(provider)
             return {"reply": _strip_think(cleaned)}
         except Exception as exc:
-            log.warning("[Brain] %s/%s failed: %s", provider, model, exc)
+            _provider_failed(provider)
+            exc_type = type(exc).__name__
+            exc_msg = str(exc)
+            # Distinguish timeout from connection error for better ops visibility
+            if "timed out" in exc_msg.lower() or "timeout" in exc_type.lower():
+                log.warning("[Brain] %s (%s) timed out after %.0fs — trying next candidate", provider, model, timeout)
+            elif "connection" in exc_msg.lower():
+                log.warning("[Brain] %s (%s) connection error: %s — trying next candidate", provider, model, exc_msg[:80])
+            else:
+                log.warning("[Brain] %s (%s) failed: %s", provider, model, exc)
 
     return {"reply": "aye my connection's trippin rn, give me a sec 📡"}
 

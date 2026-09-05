@@ -10,6 +10,7 @@ import json
 import fcntl
 import logging
 import os
+import tempfile
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -78,7 +79,7 @@ _DEFAULTS: dict[str, Any] = {
     ],
     "api_key": "",
     "model": "meta/llama-3.2-90b-vision-instruct",
-    "active_model": "meta/llama-3.2-90b-vision-instruct",
+    "active_model": "nvidia/nemotron-3-super-120b-a12b",
     "port": 5000,
     "top_k": 5,
     "chunk_words": 400,
@@ -153,10 +154,22 @@ def load_json(path: str, default: Any) -> Any:
 
 def save_json(path: str, data: Any) -> None:
     try:
-        with open(path, "w", encoding="utf-8") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)
-            json.dump(data, fh, ensure_ascii=False, indent=2)
-            fcntl.flock(fh, fcntl.LOCK_UN)
+        directory = os.path.dirname(path) or "."
+        os.makedirs(directory, exist_ok=True)
+        lock_path = f"{path}.lock"
+        with open(lock_path, "a+", encoding="utf-8") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            fd, temp_path = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", dir=directory)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh, ensure_ascii=False, indent=2)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.replace(temp_path, path)
+            finally:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+            fcntl.flock(lock, fcntl.LOCK_UN)
     except Exception as exc:
         log.warning("Could not save %s: %s", path, exc)
 

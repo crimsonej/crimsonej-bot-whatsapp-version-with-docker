@@ -25,8 +25,10 @@ RUN pip install --no-cache-dir -r /opt/build/requirements.txt \
     && pip install --no-cache-dir gunicorn
 
 # Where Render mounts the Persistent Disk. State lives here.
-ENV DATA_DIR=/data
+ENV DATA_DIR=/data \
+    MEDIA_ROOT=/media
 RUN mkdir -p /data
+RUN mkdir -p /media
 
 # Copy bot source onto /data so BASE_DIR resolves to the Persistent Disk.
 # We use a tmp staging dir to avoid clobbering existing disk contents.
@@ -53,4 +55,4 @@ ENV PYTHONUNBUFFERED=1 \
 #   strictly required for a single-process bot.
 # Railway/Render inject $PORT and route traffic to it — it MUST win.
 # Local dev: PORT unset, BOT_PORT or 5000 used as fallback.
-CMD ["sh", "-c", "BOT_PORT=${PORT:-${BOT_PORT:-5000}} python bot.py server 2>&1"]
+CMD ["sh", "-c", "exec gunicorn --config gunicorn.conf.py bot:app 2>&1"]

@@ -1,422 +1,66 @@
 {
-  "250788880000@s.whatsapp.net": {
+  "250203957407887@lid": {
     "turns": [
       {
         "role": "user",
-        "content": "Hello from thread 0"
+        "content": "hi",
+        "ts": 1788603146.329486
       },
       {
         "role": "assistant",
-        "content": "Response to thread 0"
+        "content": "hey, all good?"
       },
       {
         "role": "user",
-        "content": "Hello from thread 0"
+        "content": "how are u feeling any errors",
+        "ts": 1788603254.0437071
+      },
+      {
+        "role": "user",
+        "content": "hu",
+        "ts": 1788603447.6549342
       },
       {
         "role": "assistant",
-        "content": "Response to thread 0"
+        "content": "i'm good thanks! no errors on my end, all smooth. u?"
+      },
+      {
+        "role": "user",
+        "content": "am okay. so hau",
+        "ts": 1788603631.9140437
+      },
+      {
+        "role": "assistant",
+        "content": "i'm good thanks! just chillin. u?"
+      },
+      {
+        "role": "user",
+        "content": "which ai model are u using",
+        "ts": 1788603643.5375361
+      },
+      {
+        "role": "assistant",
+        "content": "just me, your guy crimsonej. no fancy labels, just here for u. 😌"
+      },
+      {
+        "role": "user",
+        "content": "who's ur dad",
+        "ts": 1788603661.6386328
+      },
+      {
+        "role": "assistant",
+        "content": "crimson (elijah). he built me. 😌"
+      },
+      {
+        "role": "user",
+        "content": "am I the one",
+        "ts": 1788603691.4845052
+      },
+      {
+        "role": "assistant",
+        "content": "haha, you’re the one who knows 😉 what’s up?"
       }
     ],
-    "last_active": 1788495520.7906554
-  },
-  "250788880002@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 2"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 2"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 2"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 2"
-      }
-    ],
-    "last_active": 1788495520.8029342
-  },
-  "250788880005@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 5"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 5"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 5"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 5"
-      }
-    ],
-    "last_active": 1788495520.795013
-  },
-  "250788880004@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 4"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 4"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 4"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 4"
-      }
-    ],
-    "last_active": 1788495520.7870176
-  },
-  "250788880006@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 6"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 6"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 6"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 6"
-      }
-    ],
-    "last_active": 1788495520.7906005
-  },
-  "250788880007@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 7"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 7"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 7"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 7"
-      }
-    ],
-    "last_active": 1788495520.7909076
-  },
-  "250788880001@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 1"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 1"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 1"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 1"
-      }
-    ],
-    "last_active": 1788495520.7873683
-  },
-  "250788880008@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 8"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 8"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 8"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 8"
-      }
-    ],
-    "last_active": 1788495520.7955618
-  },
-  "250788880003@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 3"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 3"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 3"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 3"
-      }
-    ],
-    "last_active": 1788495520.7887342
-  },
-  "250788880010@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 10"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 10"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 10"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 10"
-      }
-    ],
-    "last_active": 1788495520.7835853
-  },
-  "250788880011@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 11"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 11"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 11"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 11"
-      }
-    ],
-    "last_active": 1788495520.78831
-  },
-  "250788880009@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 9"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 9"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 9"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 9"
-      }
-    ],
-    "last_active": 1788495520.7874455
-  },
-  "250788880012@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 12"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 12"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 12"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 12"
-      }
-    ],
-    "last_active": 1788495520.8054554
-  },
-  "250788880015@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 15"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 15"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 15"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 15"
-      }
-    ],
-    "last_active": 1788495520.8016796
-  },
-  "250788880013@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 13"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 13"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 13"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 13"
-      }
-    ],
-    "last_active": 1788495520.7979593
-  },
-  "250788880014@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 14"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 14"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 14"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 14"
-      }
-    ],
-    "last_active": 1788495520.8011053
-  },
-  "250788880016@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 16"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 16"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 16"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 16"
-      }
-    ],
-    "last_active": 1788495520.806946
-  },
-  "250788880017@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 17"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 17"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 17"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 17"
-      }
-    ],
-    "last_active": 1788495520.8083684
-  },
-  "250788880018@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 18"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 18"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 18"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 18"
-      }
-    ],
-    "last_active": 1788495520.8075678
-  },
-  "250788880019@s.whatsapp.net": {
-    "turns": [
-      {
-        "role": "user",
-        "content": "Hello from thread 19"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 19"
-      },
-      {
-        "role": "user",
-        "content": "Hello from thread 19"
-      },
-      {
-        "role": "assistant",
-        "content": "Response to thread 19"
-      }
-    ],
-    "last_active": 1788495520.807449
+    "last_active": 1788603694.018475
   }
 }

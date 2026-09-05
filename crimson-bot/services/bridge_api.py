@@ -24,11 +24,15 @@ import requests
 from core.config import log
 
 BRIDGE_BASE = os.environ.get("BRIDGE_BASE_URL", "http://127.0.0.1:7860")
+BRIDGE_TOKEN = os.environ.get("CRIMSON_API_TOKEN", "")
+
+def _headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {BRIDGE_TOKEN}"} if BRIDGE_TOKEN else {}
 
 
 def _post(path: str, payload: dict, *, timeout: int) -> dict:
     try:
-        r = requests.post(f"{BRIDGE_BASE}{path}", json=payload, timeout=timeout)
+        r = requests.post(f"{BRIDGE_BASE}{path}", json=payload, headers=_headers(), timeout=timeout)
         if r.headers.get("content-type", "").startswith("application/json"):
             data = r.json()
         else:
@@ -77,7 +81,7 @@ def bridge_get_group_admins(group_jid: str, *, timeout: int = 10) -> dict[str, A
     Note: Requires bridge support for /group_admins endpoint.
     """
     try:
-        r = requests.post(f"{BRIDGE_BASE}/group_admins", json={"jid": group_jid}, timeout=timeout)
+        r = requests.post(f"{BRIDGE_BASE}/group_admins", json={"jid": group_jid}, headers=_headers(), timeout=timeout)
         if r.headers.get("content-type", "").startswith("application/json"):
             data = r.json()
         else:
@@ -89,3 +93,13 @@ def bridge_get_group_admins(group_jid: str, *, timeout: int = 10) -> dict[str, A
     except Exception as exc:
         log.warning("[bridge_api] group_admins failed: %s", exc)
         return {"ok": False, "error": str(exc)}
+
+
+def bridge_post_status(text: str, media_base64: str | None = None,
+                       mimetype: str | None = None, *, timeout: int = 10) -> dict[str, Any]:
+    """Post a WhatsApp status through the authenticated bridge helper."""
+    return _post("/post_status", {
+        "text": text,
+        "media_base64": media_base64,
+        "mimetype": mimetype,
+    }, timeout=timeout)

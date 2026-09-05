@@ -146,10 +146,110 @@
         "count": 1,
         "last_seen": 1787236272.4878364,
         "contexts": []
+      },
+      "person:hi": {
+        "count": 2,
+        "last_seen": 1788603453.577745,
+        "contexts": []
+      },
+      "person:errors": {
+        "count": 1,
+        "last_seen": 1788603254.0335877,
+        "contexts": []
+      },
+      "person:any": {
+        "count": 1,
+        "last_seen": 1788603254.0335906,
+        "contexts": []
+      },
+      "person:how": {
+        "count": 1,
+        "last_seen": 1788603254.0335925,
+        "contexts": []
+      },
+      "person:are": {
+        "count": 2,
+        "last_seen": 1788603643.5350957,
+        "contexts": []
+      },
+      "person:feeling": {
+        "count": 1,
+        "last_seen": 1788603254.0336661,
+        "contexts": []
+      },
+      "person:hu": {
+        "count": 1,
+        "last_seen": 1788603447.3720903,
+        "contexts": []
+      },
+      "person:hau": {
+        "count": 1,
+        "last_seen": 1788603631.7617867,
+        "contexts": []
+      },
+      "person:okay": {
+        "count": 1,
+        "last_seen": 1788603631.7617905,
+        "contexts": []
+      },
+      "person:am": {
+        "count": 2,
+        "last_seen": 1788603691.4819446,
+        "contexts": []
+      },
+      "person:so": {
+        "count": 1,
+        "last_seen": 1788603631.7617939,
+        "contexts": []
+      },
+      "person:using": {
+        "count": 1,
+        "last_seen": 1788603643.535098,
+        "contexts": []
+      },
+      "person:which": {
+        "count": 1,
+        "last_seen": 1788603643.535099,
+        "contexts": []
+      },
+      "person:ai": {
+        "count": 1,
+        "last_seen": 1788603643.5351002,
+        "contexts": []
+      },
+      "person:model": {
+        "count": 1,
+        "last_seen": 1788603643.5351012,
+        "contexts": []
+      },
+      "person:dad": {
+        "count": 1,
+        "last_seen": 1788603661.6371138,
+        "contexts": []
+      },
+      "person:ur": {
+        "count": 1,
+        "last_seen": 1788603661.6371148,
+        "contexts": []
+      },
+      "person:who": {
+        "count": 1,
+        "last_seen": 1788603661.6371157,
+        "contexts": []
+      },
+      "person:the": {
+        "count": 1,
+        "last_seen": 1788603691.481943,
+        "contexts": []
+      },
+      "person:one": {
+        "count": 1,
+        "last_seen": 1788603691.4819455,
+        "contexts": []
       }
     },
     "cross_refs": [],
-    "last_updated": 1787236272.4878476
+    "last_updated": 1788603691.4819505
   },
   "12345": {
     "topics": {},

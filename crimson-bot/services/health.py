@@ -76,9 +76,11 @@ def _maybe_autofix():
         if dead_dispatcher:
             log.warning("[Health] auto-heal triggered: dispatcher dead")
             safe_auto_heal("health_monitor")
-        # Stale-running tasks are handled by the progress sweeper and
-        # manual autofix triggers; we avoid restarting the dispatcher
-        # on every heartbeat just because some tasks are stale.
+        else:
+            from services.autofix import requeue_stale_tasks
+            result = requeue_stale_tasks()
+            if result.get("requeued"):
+                log.warning("[Health] requeued stale tasks: %s", result["requeued"])
     except Exception as e:
         log.warning("[Health] auto-heal check failed: %s", e)
 

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   crimson-bot:
     build:
@@ -7,12 +5,16 @@ services:
       dockerfile: ./crimson-bot/Dockerfile
     container_name: crimson-bot
     restart: unless-stopped
+    env_file:
+      - ./crimson-bot/.env
     ports:
       - "5000:5000"
     environment:
       - BOT_PORT=5000
+      - MEDIA_ROOT=/media
     volumes:
       - bot_data:/data
+      - media_data:/media
 
   whatsapp-bridge:
     build:
@@ -20,17 +22,22 @@ services:
       dockerfile: ./whatsapp-bridge/Dockerfile
     container_name: whatsapp-bridge
     restart: unless-stopped
+    env_file:
+      - ./whatsapp-bridge/.env
     ports:
       - "7860:7860"
     environment:
       - PORT=7860
       - AI_SERVER=http://crimson-bot:5000/reply
       - AUTH_DIR=/data/auth_info_baileys
+      - MEDIA_ROOT=/media
     volumes:
       - bridge_data:/data
+      - media_data:/media
     depends_on:
       - crimson-bot
 
 volumes:
   bot_data:
   bridge_data:
+  media_data:

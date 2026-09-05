@@ -7,9 +7,26 @@ Extracts main article text, headers, and clean readable content from any URL.
 
 import logging
 import re
+import ipaddress
+import socket
 from typing import Dict, Any, Optional
 
 log = logging.getLogger("crimson")
+
+def _public_url(url: str) -> tuple[bool, str]:
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False, "Only public HTTP(S) URLs are allowed"
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo(parsed.hostname, None)}
+        for address in addresses:
+            ip = ipaddress.ip_address(address)
+            if not ip.is_global:
+                return False, "Private or local network URLs are not allowed"
+    except (OSError, ValueError):
+        return False, "Could not validate URL host"
+    return True, ""
 
 def fetch_url_content(url: str, max_chars: int = 15000) -> Dict[str, Any]:
     """
@@ -28,6 +45,10 @@ def fetch_url_content(url: str, max_chars: int = 15000) -> Dict[str, Any]:
     url = url.strip()
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
+
+    allowed, error = _public_url(url)
+    if not allowed:
+        return {"ok": False, "title": "", "domain": "", "text": "", "error": error}
 
     from urllib.parse import urlparse
     domain = urlparse(url).netloc
