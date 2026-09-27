@@ -1,27 +1,19 @@
 # Dockerfile for the Crimsonej WhatsApp Bridge (Node.js + Baileys)
-# Renders the bridge service. No bridge source code is modified.
-#
-# Persistent Disk strategy:
-#   Render mounts the Persistent Disk at /data.
-#   bridge.js auto-detects /data and stores Baileys auth state in
-#   /data/auth_info_baileys when present:
-#       const AUTH_DIR = process.env.AUTH_DIR
-#                  || (fs.existsSync('/data') ? '/data/auth_info_baileys'
-#                                              : 'auth_info_baileys');
-#   So we just need to ensure /data exists at runtime — no source edit.
-#
-# Puppeteer note:
-#   whatsapp-web.js / venom-bot pull in Puppeteer. We install Chromium
-#   deps and point Puppeteer at the bundled Chromium. This image is
-#   large (~1 GB) — Render free tier has a 2 GB image cap, so we may
-#   hit that. See runbook.
-
 FROM node:20-bookworm-slim
 
-# Chromium runtime deps for Puppeteer + general build tools
+# Chromium runtime deps for Puppeteer + media & build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         fonts-liberation \
+        fonts-noto-color-emoji \
+        ffmpeg \
+        webp \
+        libwebp-dev \
+        imagemagick \
+        procps \
+        git \
+        wget \
+        curl \
         libasound2 \
         libatk-bridge2.0-0 \
         libatk1.0-0 \
@@ -45,7 +37,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxkbcommon0 \
         libxrandr2 \
         xvfb \
-        curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Persistent Disk mount point
@@ -60,9 +51,6 @@ RUN npm ci --omit=dev --no-audit --no-fund \
     || npm install --omit=dev --no-audit --no-fund
 
 # Stage bridge source onto /data alongside the persistent auth dir.
-# The repo contains a committed node_modules/ which is stale and broken
-# (missing ESM dist files, e.g. lru-cache). Copy source files only, then
-# install a fresh node_modules from the build stage.
 WORKDIR /opt/bridge-src
 COPY whatsapp-bridge/*.js whatsapp-bridge/*.json whatsapp-bridge/*.py whatsapp-bridge/*.md whatsapp-bridge/.env.example /opt/bridge-src/
 RUN cp -a /opt/bridge-src/. /data/ && rm -rf /opt/bridge-src \

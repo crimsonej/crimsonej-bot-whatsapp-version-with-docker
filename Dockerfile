@@ -1,10 +1,13 @@
 # Unified Dockerfile for Crimsonej (Python AI Engine + Node.js WhatsApp Bridge)
 FROM python:3.11-slim
 
-# Install Node.js 20, FFmpeg, fonts, OCR, PDF tools, build tools, and system dependencies
+# Install Node.js 20, FFmpeg, fonts, OCR, PDF tools, LibreOffice, ImageMagick, WebP, Chromium, media tools, and system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
+        wget \
         ffmpeg \
+        atomicparsley \
+        aria2 \
         ca-certificates \
         git \
         procps \
@@ -13,17 +16,62 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libssl-dev \
         fonts-liberation \
         fontconfig \
+        fonts-dejavu-core \
+        fonts-freefont-ttf \
+        fonts-noto-color-emoji \
+        fonts-roboto \
         poppler-utils \
         tesseract-ocr \
         tesseract-ocr-eng \
+        tesseract-ocr-fra \
+        tesseract-ocr-spa \
+        tesseract-ocr-deu \
+        tesseract-ocr-zho \
+        tesseract-ocr-ara \
+        tesseract-ocr-rus \
+        tesseract-ocr-por \
+        tesseract-ocr-ita \
+        tesseract-ocr-hin \
+        libreoffice-writer \
+        libreoffice-calc \
+        libreoffice-impress \
+        libreoffice-java-common \
         pandoc \
         graphviz \
         sqlite3 \
         zip \
         unzip \
         tar \
+        gzip \
+        bzip2 \
+        xz-utils \
+        imagemagick \
+        graphicsmagick \
+        webp \
+        libwebp-dev \
+        ghostscript \
+        sox \
+        libsox-fmt-all \
+        flac \
+        lame \
+        vorbis-tools \
+        opus-tools \
+        exiftool \
+        mediainfo \
+        chromium \
+        chromium-driver \
+        xvfb \
+        jq \
+        net-tools \
+        iputils-ping \
+        dnsutils \
+        redis-server \
+        htop \
+        tree \
+        psmisc \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
+    && sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml || true \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -52,7 +100,10 @@ ENV PORT=7860 \
     DATA_DIR=/data \
     AUTH_DIR=/data/auth_info_baileys \
     PYTHONUNBUFFERED=1 \
-    NODE_ENV=production
+    NODE_ENV=production \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    CHROME_BIN=/usr/bin/chromium \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 # Ensure permissions for executable scripts
 RUN chmod +x /app/crimsonej /app/orchestrator.py

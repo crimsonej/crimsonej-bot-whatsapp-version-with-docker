@@ -833,34 +833,29 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
                 topics.append(p.upper())
         if not sessions:
             sessions = ["pre_london", "eod"]
-        # Only allow in groups — check if session_id is a group JID
-        is_group_chat = session_id.endswith("@g.us")
-        if not is_group_chat:
-            return {"reply": "This command only works in groups. Add me to a group and run it there."}
-        group_jid = session_id  # session_id is the group JID in group chats
+        target_jid = session_id if (session_id and "@" in session_id) else (f"{user_phone}@s.whatsapp.net" if user_phone else session_id)
         from services.trading import subscribe_group
-        res = subscribe_group(group_jid, user_phone, sessions, topics)
+        res = subscribe_group(target_jid, user_phone, sessions, topics)
         if res["ok"]:
             sub = res["subscription"]
             sess_str = ", ".join(sub["sessions"])
             topic_str = ", ".join(sub["topics"]) if sub["topics"] else "all major pairs"
-            return {"reply": f"✅ Subscribed this group to {sess_str} briefing with: {topic_str}"}
+            is_group_chat = session_id.endswith("@g.us")
+            chat_type = "group" if is_group_chat else "chat"
+            return {"reply": f"✅ Subscribed this {chat_type} to {sess_str} briefing with: {topic_str}"}
         return {"reply": f"Failed: {res.get('message', 'unknown error')}"}
 
     if lower.startswith("/briefing_unsubscribe") or lower.startswith("/brief_unsub"):
-        is_group_chat = session_id.endswith("@g.us")
-        if not is_group_chat:
-            return {"reply": "Run this in the group you want to unsubscribe."}
-        group_jid = session_id
+        target_jid = session_id if (session_id and "@" in session_id) else (f"{user_phone}@s.whatsapp.net" if user_phone else session_id)
         from services.trading import unsubscribe_group
-        res = unsubscribe_group(group_jid)
+        res = unsubscribe_group(target_jid)
         return {"reply": res["message"]}
 
     if lower.startswith("/briefing_list") or lower.startswith("/brief_list"):
         from services.trading import list_subscriptions
         subs = list_subscriptions()
         if not subs:
-            return {"reply": "No active group subscriptions."}
+            return {"reply": "No active briefing subscriptions."}
         lines = ["📋 **Active Briefing Subscriptions:**"]
         for s in subs:
             topics = ", ".join(s["topics"]) if s["topics"] else "all major"

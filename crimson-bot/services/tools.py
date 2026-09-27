@@ -2147,16 +2147,16 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
             from services.trading import subscribe_group
             sessions = args.get("sessions", ["pre_london", "eod"])
             topics = args.get("topics", [])
-            # sender_jid is the group JID in group chats
-            if not sender_jid or not sender_jid.endswith("@g.us"):
-                reply = "This only works in groups. Add me to a group first."
+            target_jid = sender_jid or (f"{user_id}@s.whatsapp.net" if user_id else "")
+            if not target_jid:
+                reply = "Could not determine target chat for subscription."
             else:
-                res = subscribe_group(sender_jid, user_id, sessions, topics)
+                res = subscribe_group(target_jid, user_id or "", sessions, topics)
                 if res["ok"]:
                     sub = res["subscription"]
                     sess_str = ", ".join(sub["sessions"])
                     topic_str = ", ".join(sub["topics"]) if sub["topics"] else "all major pairs"
-                    reply = f"✅ Subscribed this group to {sess_str} briefing with: {topic_str}"
+                    reply = f"✅ Subscribed this chat to {sess_str} briefing with: {topic_str}"
                 else:
                     reply = f"Failed: {res.get('message', 'unknown error')}"
             messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
@@ -2165,10 +2165,11 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
 
         elif name == "unsubscribe_briefing":
             from services.trading import unsubscribe_group
-            if not sender_jid or not sender_jid.endswith("@g.us"):
-                reply = "Run this in the group you want to unsubscribe."
+            target_jid = sender_jid or (f"{user_id}@s.whatsapp.net" if user_id else "")
+            if not target_jid:
+                reply = "Could not determine target chat."
             else:
-                res = unsubscribe_group(sender_jid)
+                res = unsubscribe_group(target_jid)
                 reply = res["message"]
             messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
                              "content": json.dumps({"ok": True, "reply": reply})})
@@ -2178,7 +2179,7 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
             from services.trading import list_subscriptions
             subs = list_subscriptions()
             if not subs:
-                reply = "No active group subscriptions."
+                reply = "No active briefing subscriptions."
             else:
                 lines = ["📋 **Active Briefing Subscriptions:**"]
                 for s in subs:

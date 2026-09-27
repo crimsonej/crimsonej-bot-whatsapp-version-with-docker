@@ -482,13 +482,13 @@ def _save_subscriptions() -> None:
 
 
 def get_subscription(group_jid: str) -> dict | None:
-    """Get subscription config for a group."""
+    """Get subscription config for a chat (group or DM)."""
     subs = _load_subscriptions()
     return subs.get(group_jid)
 
 
 def subscribe_group(group_jid: str, user_id: str, sessions: list[str] = None, topics: list[str] = None) -> dict:
-    """Subscribe a group to daily briefings.
+    """Subscribe a chat (group or DM) to daily briefings.
 
     sessions: ['pre_london', 'eod'] (default both)
     topics: list of symbols (e.g. ['BTC', 'ETH', 'EURUSD', 'GOLD']) - max MAX_BRIEFING_TOPICS
@@ -522,7 +522,7 @@ def subscribe_group(group_jid: str, user_id: str, sessions: list[str] = None, to
 
 
 def unsubscribe_group(group_jid: str) -> dict:
-    """Unsubscribe a group from briefings."""
+    """Unsubscribe a chat (group or DM) from briefings."""
     subs = _load_subscriptions()
     if group_jid in subs:
         del subs[group_jid]
@@ -580,7 +580,7 @@ def generate_custom_briefing(session: str, topics: list[str]) -> dict:
 
 
 def post_briefing_to_groups(bridge_api, session: str = "pre_london") -> int:
-    """Post briefings to all subscribed groups for the session."""
+    """Post briefings to all subscribed chats (groups and DMs) for the session."""
     subs = _load_subscriptions()
     posted = 0
 
@@ -595,9 +595,9 @@ def post_briefing_to_groups(bridge_api, session: str = "pre_london") -> int:
             brief = generate_custom_briefing(session, topics)
             bridge_api.bridge_send(group_jid, brief["text"])
             posted += 1
-            log.info("[Trading] Posted %s briefing to group %s", session, group_jid.split("@")[0])
+            log.info("[Trading] Posted %s briefing to chat %s", session, group_jid.split("@")[0])
         except Exception as exc:
-            log.error("[Trading] Failed to post to group %s: %s", group_jid, exc)
+            log.error("[Trading] Failed to post to chat %s: %s", group_jid, exc)
 
     return posted
 
