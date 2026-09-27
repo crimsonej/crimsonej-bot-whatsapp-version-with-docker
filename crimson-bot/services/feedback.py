@@ -49,14 +49,18 @@ FEEDBACK_NEGATIVE = {"bad", "wrong", "stupid", "useless", "garbage", "trash", "h
 
 def detect_feedback(message: str) -> str | None:
     """Detect if message contains explicit feedback. Returns 'positive', 'negative', or None."""
-    msg_lower = message.lower()
+    msg_lower = message.lower().strip()
+    if not msg_lower:
+        return None
     
     for phrase in FEEDBACK_POSITIVE:
-        if phrase in msg_lower:
+        pattern = r"\b" + re.escape(phrase) + r"\b" if phrase.isalnum() else re.escape(phrase)
+        if re.search(pattern, msg_lower):
             return "positive"
     
     for phrase in FEEDBACK_NEGATIVE:
-        if phrase in msg_lower:
+        pattern = r"\b" + re.escape(phrase) + r"\b" if phrase.isalnum() else re.escape(phrase)
+        if re.search(pattern, msg_lower):
             return "negative"
     
     return None

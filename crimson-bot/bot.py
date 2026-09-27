@@ -2199,6 +2199,7 @@ def route_reply():
             
             return jsonify({"reply": reply_text}), 200
         except Exception as exc:
+            log.error("[route_reply ERROR] user=%s sender=%s: %s", user_phone, sender, exc, exc_info=True)
             _notify_raw_error(exc, context=f"route_reply user={user_phone} sender={sender}", user_phone=user_phone)
             return jsonify({"reply": "I hit a snag on my end — give me a sec and I’ll sort it."}), 200
 

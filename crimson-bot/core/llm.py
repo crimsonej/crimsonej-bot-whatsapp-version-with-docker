@@ -184,6 +184,12 @@ def _infer_provider(model: str) -> str:
         return "mistral"
     if "llama-3.3" in m or "llama3-" in m:
         return "groq"
+    if m.startswith("meta/") or "huggingface" in m or "hf/" in m or "router.huggingface" in m:
+        return "huggingface"
+    if "openrouter" in m:
+        return "openrouter"
+    if "together" in m:
+        return "together"
     return "nvidia"
 
 
@@ -217,6 +223,21 @@ def _model_candidates(primary_model: str) -> list[dict[str, str]]:
 
     add(NVIDIA_BRAIN, "nvidia")
     add(NVIDIA_SCOUT, "nvidia")
+
+    # Fallback dynamically to whichever provider has an active API key in env
+    for p in PROVIDER_ENV_KEYS:
+        if _provider_key(p):
+            if p == "huggingface":
+                add("meta-llama/Llama-3.2-11B-Vision-Instruct", "huggingface")
+            elif p == "groq":
+                add("llama-3.3-70b-versatile", "groq")
+            elif p == "openai":
+                add("gpt-4o-mini", "openai")
+            elif p == "openrouter":
+                add("meta-llama/llama-3.3-70b-instruct", "openrouter")
+            elif p == "deepseek":
+                add("deepseek-chat", "deepseek")
+
     return out
 
 
