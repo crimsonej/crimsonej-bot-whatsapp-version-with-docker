@@ -11,7 +11,6 @@ restartPolicyType = "on-failure"
 restartPolicyMaxRetries = 10
 
 [services.crimson-bot]
-# Main unified bot container
 builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
@@ -23,22 +22,9 @@ DATA_DIR = "/data"
 AUTH_DIR = "/data/auth_info_baileys"
 BOT_NAME = "crimsonej"
 MODEL = "meta/llama-3.2-90b-vision-instruct"
-ACTIVE_MODEL = "meta/llama-3.2-90b-vision-instruct"
-SCOUT_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
-PYTHONUNBUFFERED = "1"
-PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
-CHROME_BIN = "/usr/bin/chromium"
-PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
-TRADING_BRIEFING_ENABLED = "true"
-TRADING_BRIEFING_PRE_LONDON = "07:30"
-TRADING_BRIEFING_EOD = "21:30"
-# Configure in Railway Dashboard:
+# Required - Add in Railway Dashboard:
 # NVIDIA_API_KEY = "nvapi-..."
 # GROQ_API_KEY = "gsk_..."
-# HF_API_KEY = "hf_..."
-# GITHUB_TOKEN = "ghp_..."
-# GITHUB_BACKUP_REPO = "owner/repo"
-# CRIMSON_API_TOKEN = "shared_security_token"
 # CREATOR_PHONE = "256742184690"
 
 [services.crimson-bot.volumes]
