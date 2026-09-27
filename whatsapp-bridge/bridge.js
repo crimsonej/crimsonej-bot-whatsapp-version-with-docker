@@ -1678,44 +1678,47 @@ http.createServer((req, res) => {
     }
 
     if (req.method === 'GET' && req.url === '/list_groups' || req.method === 'POST' && req.url === '/list_groups') {
-        try {
-            if (!sock) {
-                res.writeHead(503, { 'Content-Type': 'application/json' });
-                return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
-            }
-            const groupsDict = await sock.groupFetchAllParticipating();
-            const botNum = sock.user?.id ? sock.user.id.split(':')[0].split('@')[0] : '';
-            const botLid = sock.user?.lid ? sock.user.lid.split(':')[0].split('@')[0] : '';
+        (async () => {
+            try {
+                if (!sock) {
+                    res.writeHead(503, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
+                }
+                const groupsDict = await sock.groupFetchAllParticipating();
+                const botNum = sock.user?.id ? sock.user.id.split(':')[0].split('@')[0] : '';
+                const botLid = sock.user?.lid ? sock.user.lid.split(':')[0].split('@')[0] : '';
 
-            const result = [];
-            for (const [jid, meta] of Object.entries(groupsDict)) {
-                const participants = meta.participants || [];
-                const botParticipant = participants.find(p => {
-                    const pid = (p.id || p.jid || '').split('@')[0].split(':')[0];
-                    return pid === botNum || pid === botLid;
-                });
-                const isBotAdmin = !!(botParticipant && (botParticipant.admin === 'admin' || botParticipant.admin === 'superadmin' || botParticipant.admin === true));
-                const adminJids = participants.filter(p => p.admin).map(p => p.id || p.jid);
+                const result = [];
+                for (const [jid, meta] of Object.entries(groupsDict)) {
+                    const participants = meta.participants || [];
+                    const botParticipant = participants.find(p => {
+                        const pid = (p.id || p.jid || '').split('@')[0].split(':')[0];
+                        return pid === botNum || pid === botLid;
+                    });
+                    const isBotAdmin = !!(botParticipant && (botParticipant.admin === 'admin' || botParticipant.admin === 'superadmin' || botParticipant.admin === true));
+                    const adminJids = participants.filter(p => p.admin).map(p => p.id || p.jid);
 
-                result.append ? null : result.push({
-                    jid: jid,
-                    subject: meta.subject || '',
-                    owner: meta.owner || meta.subjectOwner || '',
-                    participant_count: participants.length,
-                    is_bot_admin: isBotAdmin,
-                    admin_jids: adminJids,
-                    announce: !!meta.announce,
-                    linked_parent: meta.linkedParent || null,
-                    restrict: !!meta.restrict,
-                });
+                    result.push({
+                        jid: jid,
+                        subject: meta.subject || '',
+                        owner: meta.owner || meta.subjectOwner || '',
+                        participant_count: participants.length,
+                        is_bot_admin: isBotAdmin,
+                        admin_jids: adminJids,
+                        announce: !!meta.announce,
+                        linked_parent: meta.linkedParent || null,
+                        restrict: !!meta.restrict,
+                    });
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ ok: true, count: result.length, groups: result }));
+            } catch (e) {
+                console.error('[API] /list_groups error:', e.message);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ ok: false, error: e.message }));
             }
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ ok: true, count: result.length, groups: result }));
-        } catch (e) {
-            console.error('[API] /list_groups error:', e.message);
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ ok: false, error: e.message }));
-        }
+        })();
+        return;
     }
 
     if (req.method === 'POST' && req.url === '/group_setting') {
