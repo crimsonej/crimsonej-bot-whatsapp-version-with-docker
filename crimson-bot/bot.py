@@ -138,9 +138,15 @@ app = Flask(__name__)
 @app.before_request
 def require_internal_api_token():
     """Protect bot control routes while leaving health probes available."""
-    if request.path == "/health":
+    if request.path in ("/health", "/metrics"):
         return None
-    # No token required - trust internal network (Docker network)
+    expected_token = os.getenv("CRIMSON_API_TOKEN")
+    if not expected_token:
+        return None
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "").strip() if auth_header.startswith("Bearer ") else request.args.get("token") or ""
+    if token != expected_token:
+        return jsonify({"error": "unauthorized"}), 401
     return None
 _BOOT_TIME: float = 0.0
 doc_session: dict[str, Any] = {}  # docs are transient — never restored from disk
@@ -2316,15 +2322,6 @@ def _global_error_handler(exc: Exception):
         return jsonify({"reply": "I hit a snag on my end — give me a sec and I’ll sort it."}), 200
     return jsonify({"error": "internal_error"}), 500
 
-
-@app.route('/health', methods=['GET'])
-def route_health():
-    try:
-        from services.health import last_status, get_status
-        s = last_status() or get_status()
-        return jsonify(s), 200
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/sync_status", methods=["GET"])

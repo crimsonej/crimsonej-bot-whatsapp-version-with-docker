@@ -68,7 +68,11 @@ class EnvironmentInfo:
     redis_available: bool = False
     database_path: str = ""
 
-    # Optimization configs per feature
+    # Feature management
+    features_enabled: Dict[str, bool] = field(default_factory=dict)
+    degradation_reasons: Dict[str, str] = field(default_factory=dict)
+
+    # Render-specific
     optimizations: Dict[str, OptimizationConfig] = field(default_factory=dict)
 
     # Render-specific
@@ -476,6 +480,25 @@ def is_constrained(feature: str) -> bool:
     """Check if a feature is resource-constrained."""
     info = get_environment_info()
     return info.is_constrained(feature)
+
+
+def is_feature_enabled(feature: str) -> bool:
+    """Check if a feature is enabled in the current environment."""
+    info = get_environment_info()
+    if feature in info.features_enabled:
+        return info.features_enabled[feature]
+    return not info.is_constrained(feature)
+
+
+def get_degradation_reason(feature: str) -> Optional[str]:
+    """Get degradation reason for a feature if any."""
+    info = get_environment_info()
+    if feature in info.degradation_reasons:
+        return info.degradation_reasons[feature]
+    if info.is_constrained(feature):
+        opt = info.get_optimization(feature)
+        return opt.fallback_message
+    return None
 
 
 def get_optimized_params(feature: str, base_params: Dict) -> Dict:

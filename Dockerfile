@@ -1,7 +1,7 @@
 # Unified Dockerfile for Crimsonej (Python AI Engine + Node.js WhatsApp Bridge)
 FROM python:3.11-slim
 
-# Install Node.js 20, FFmpeg, fonts, build tools, and system dependencies
+# Install Node.js 20, FFmpeg, fonts, OCR, PDF tools, build tools, and system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ffmpeg \
@@ -13,6 +13,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libssl-dev \
         fonts-liberation \
         fontconfig \
+        poppler-utils \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        pandoc \
+        graphviz \
+        sqlite3 \
+        zip \
+        unzip \
+        tar \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*

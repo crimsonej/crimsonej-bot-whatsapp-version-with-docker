@@ -1,16 +1,26 @@
 # Dockerfile for the Crimsonej AI Engine (Python Flask)
 FROM python:3.11-slim
 
-# System deps for yt-dlp (ffmpeg for audio extraction), Pillow, pdf2docx, ReportLab fonts, build tools
+# System deps for yt-dlp, Pillow, pdf2docx, OCR, PDF conversion, ReportLab fonts, build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         ca-certificates \
         curl \
+        git \
         build-essential \
         libffi-dev \
         libssl-dev \
         fonts-liberation \
         fontconfig \
+        poppler-utils \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        pandoc \
+        graphviz \
+        sqlite3 \
+        zip \
+        unzip \
+        tar \
     && rm -rf /var/lib/apt/lists/*
 
 # Python deps first for layer caching
