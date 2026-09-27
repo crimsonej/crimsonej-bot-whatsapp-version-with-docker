@@ -22,4 +22,17 @@ httpx
 beautifulsoup4
 matplotlib
 yfinance
+prometheus-client
+redis
+rq
+rq-scheduler
+qdrant-client
+sentence-transformers
+faster-whisper
+torch
+torchaudio
+pydub
+importlib-metadata
+click
+pyyaml
 

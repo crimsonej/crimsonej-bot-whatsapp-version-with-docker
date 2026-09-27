@@ -139,8 +139,8 @@
     ],
     "relationship": null,
     "preferences": {},
-    "interaction_count": 9,
-    "last_seen": "2026-09-05T13:21:31.480832",
+    "interaction_count": 11,
+    "last_seen": "2026-09-05T13:34:32.481537",
     "first_seen": "2026-08-20T17:02:46.949689",
     "is_creator": false,
     "ignore_status": false,
@@ -562,5 +562,20 @@
     "is_creator": false,
     "ignore_status": false,
     "jid": "audit-local@example"
+  },
+  "256700000001": {
+    "phone": "256700000001",
+    "name": "Live Scenario User",
+    "nicknames": [],
+    "facts": [],
+    "interests": [],
+    "relationship": null,
+    "preferences": {},
+    "interaction_count": 2,
+    "last_seen": "2026-09-05T14:17:09.443822",
+    "first_seen": "2026-09-05T14:16:54.544384",
+    "is_creator": false,
+    "ignore_status": false,
+    "jid": "256700000001@s.whatsapp.net"
   }
 }

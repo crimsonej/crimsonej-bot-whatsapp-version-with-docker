@@ -1,0 +1,472 @@
+"""
+services/dynamic_tools.py
+=========================
+Dynamic Tool System.
+Allows the bot to create, register, and persist its own tools at runtime.
+Tools are stored as Python files in GitHub backup repo and SQLite.
+"""
+
+from __future__ import annotations
+
+import ast
+import importlib.util
+import json
+import os
+import sys
+import textwrap
+import time
+import types
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Set
+
+from core.config import cfg, log
+from services.github_search import github_upsert_file, github_get_file
+from services.storage import profile_get, profile_update
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DYNAMIC TOOL REGISTRY
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DynamicToolRegistry:
+    """
+    Manages dynamically created tools.
+    Tools are Python functions with JSON schemas.
+    """
+    
+    def __init__(self):
+        self.tools: Dict[str, Dict[str, Any]] = {}  # name -> {schema, func, source, metadata}
+        self.loaded_names: Set[str] = set()
+        self._init_builtin_tools()
+    
+    def _init_builtin_tools(self):
+        """Load the 31 built-in tools as baseline."""
+        # These are the static tools - we keep references but don't manage them
+        pass
+    
+    def register(self, name: str, schema: Dict, func: Callable, source: str, metadata: Dict = None) -> bool:
+        """Register a dynamic tool."""
+        if name in self.loaded_names:
+            log.warning(f"[DynamicTools] Tool {name} already exists, overwriting")
+        
+        # Validate schema
+        if not self._validate_schema(schema):
+            log.error(f"[DynamicTools] Invalid schema for {name}")
+            return False
+        
+        self.tools[name] = {
+            "schema": schema,
+            "func": func,
+            "source": source,
+            "metadata": metadata or {},
+            "created_at": time.time(),
+            "dynamic": True
+        }
+        self.loaded_names.add(name)
+        log.info(f"[DynamicTools] Registered dynamic tool: {name}")
+        return True
+    
+    def _validate_schema(self, schema: Dict) -> bool:
+        """Basic JSON schema validation."""
+        required = ["type", "function"]
+        if not all(k in schema for k in required):
+            return False
+        func = schema.get("function", {})
+        return all(k in func for k in ["name", "description", "parameters"])
+    
+    def unregister(self, name: str) -> bool:
+        """Remove a dynamic tool."""
+        if name in self.tools and self.tools[name].get("dynamic"):
+            del self.tools[name]
+            self.loaded_names.discard(name)
+            log.info(f"[DynamicTools] Unregistered: {name}")
+            return True
+        return False
+    
+    def get_schema(self, name: str) -> Optional[Dict]:
+        """Get tool schema for LLM."""
+        if name in self.tools:
+            return self.tools[name]["schema"]
+        return None
+    
+    def get_all_schemas(self) -> List[Dict]:
+        """Get all dynamic tool schemas for LLM."""
+        return [t["schema"] for t in self.tools.values() if t.get("dynamic")]
+    
+    def execute(self, name: str, args: Dict, **context) -> Any:
+        """Execute a dynamic tool."""
+        if name not in self.tools:
+            raise ValueError(f"Tool {name} not found")
+        func = self.tools[name]["func"]
+        return func(args, **context)
+    
+    def list_dynamic(self) -> List[Dict]:
+        """List all dynamic tools."""
+        return [
+            {"name": name, **t["metadata"], "created_at": t["created_at"]}
+            for name, t in self.tools.items() if t.get("dynamic")
+        ]
+
+
+# Global registry
+_dynamic_registry = DynamicToolRegistry()
+
+
+def get_dynamic_registry() -> DynamicToolRegistry:
+    return _dynamic_registry
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TOOL CREATION FROM LLM
+# ─────────────────────────────────────────────────────────────────────────────
+
+CREATE_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "create_dynamic_tool",
+        "description": "Create a new dynamic tool at runtime. Write Python code, provide JSON schema, and the tool becomes immediately available. Persists to GitHub and survives restarts.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Tool name (snake_case, unique). Will be prefixed with 'dyn_'."
+                },
+                "description": {
+                    "type": "string",
+                    "description": "What the tool does - shown to LLM when deciding to use it."
+                },
+                "parameters_schema": {
+                    "type": "object",
+                    "description": "JSON schema for tool parameters (OpenAPI format).",
+                    "properties": {
+                        "type": {"type": "string", "const": "object"},
+                        "properties": {"type": "object"},
+                        "required": {"type": "array", "items": {"type": "string"}}
+                    },
+                    "required": ["type", "properties", "required"]
+                },
+                "python_code": {
+                    "type": "string",
+                    "description": "Python function source code. Must define a function matching the name that takes (args: dict, **context) and returns any."
+                },
+                "metadata": {
+                    "type": "object",
+                    "description": "Optional metadata: category, version, author, etc.",
+                    "properties": {
+                        "category": {"type": "string"},
+                        "version": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}}
+                    }
+                }
+            },
+            "required": ["name", "description", "parameters_schema", "python_code"]
+        }
+    }
+
+
+def _compile_tool(name: str, python_code: str) -> Callable:
+    """Compile Python code into a callable function."""
+    # Create a clean namespace
+    namespace = {
+        "__builtins__": {
+            "len": len, "str": str, "int": int, "float": float, "bool": bool,
+            "list": list, "dict": dict, "set": set, "tuple": tuple,
+            "sum": sum, "max": max, "min": min, "abs": abs, "round": round,
+            "sorted": sorted, "reversed": reversed, "enumerate": enumerate,
+            "zip": zip, "range": range, "isinstance": isinstance,
+            "hasattr": hasattr, "getattr": getattr, "setattr": setattr,
+            "Exception": Exception, "ValueError": ValueError, "KeyError": KeyError,
+            "TypeError": TypeError, "AttributeError": AttributeError,
+            "json": __import__("json"), "re": __import__("re"),
+            "time": __import__("time"), "datetime": __import__("datetime"),
+            "Path": __import__("pathlib").Path, "os": __import__("os"),
+        }
+    }
+    
+    # Wrap code in function if not already
+    if f"def {name}" not in python_code:
+        python_code = f"def {name}(args, **context):\n" + textwrap.indent(python_code, "    ")
+    
+    # Execute in namespace
+    exec(python_code, namespace)
+    
+    func = namespace.get(name)
+    if not callable(func):
+        raise ValueError(f"Code did not define callable {name}")
+    
+    return func
+
+
+def create_dynamic_tool(
+    name: str,
+    description: str,
+    parameters_schema: Dict,
+    python_code: str,
+    metadata: Dict = None
+) -> Dict[str, Any]:
+    """Create and register a new dynamic tool."""
+    
+    # Prefix with dyn_ to avoid conflicts
+    if not name.startswith("dyn_"):
+        name = f"dyn_{name}"
+    
+    # Validate name
+    if not name.isidentifier():
+        return {"ok": False, "error": f"Invalid tool name: {name}"}
+    
+    # Compile the function
+    try:
+        func = _compile_tool(name, python_code)
+    except Exception as e:
+        return {"ok": False, "error": f"Compilation failed: {e}"}
+    
+    # Build schema
+    schema = {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters_schema
+        }
+    }
+    
+    # Register
+    registry = get_dynamic_registry()
+    if not registry.register(name, schema, func, python_code, metadata):
+        return {"ok": False, "error": "Registration failed"}
+    
+    # Persist to GitHub (async, best-effort)
+    _persist_tool_async(name, description, parameters_schema, python_code, metadata)
+    
+    return {
+        "ok": True,
+        "name": name,
+        "message": f"Tool {name} created and ready to use"
+    }
+
+
+def _persist_tool_async(name: str, description: str, schema: Dict, code: str, metadata: Dict):
+    """Persist tool to GitHub backup repo."""
+    try:
+        repo = cfg("github_backup_repo") or ""
+        if not repo:
+            return
+        
+        tool_data = {
+            "name": name,
+            "description": description,
+            "parameters_schema": schema,
+            "python_code": code,
+            "metadata": metadata or {},
+            "created_at": time.time(),
+        }
+        
+        path = f"dynamic_tools/{name}.json"
+        content = json.dumps(tool_data, indent=2)
+        
+        github_upsert_file(repo, path, content, f"Add/update dynamic tool: {name}")
+        log.info(f"[DynamicTools] Persisted {name} to GitHub")
+    except Exception as e:
+        log.warning(f"[DynamicTools] Failed to persist {name}: {e}")
+
+
+def load_dynamic_tools_from_github() -> int:
+    """Load all dynamic tools from GitHub on startup."""
+    repo = cfg("github_backup_repo") or ""
+    if not repo:
+        return 0
+    
+    try:
+        result = github_list_files(repo, "dynamic_tools")
+        if not result.get("ok"):
+            return 0
+        
+        loaded = 0
+        for file_info in result.get("files", []):
+            if not file_info["name"].endswith(".json"):
+                continue
+            
+            file_result = github_get_file(cfg("github_backup_repo") or "", f"dynamic_tools/{file_info['name']}")
+            if not file_result.get("ok"):
+                continue
+            
+            try:
+                tool_data = json.loads(file_result["content"])
+                name = tool_data["name"]
+                
+                # Compile and register
+                func = _compile_tool(name, tool_data["python_code"])
+                schema = {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": tool_data["description"],
+                        "parameters": tool_data["parameters_schema"]
+                    }
+                }
+                
+                registry = get_dynamic_registry()
+                registry.tools[name] = {
+                    "schema": schema,
+                    "func": func,
+                    "source": tool_data["python_code"],
+                    "metadata": tool_data.get("metadata", {}),
+                    "created_at": tool_data.get("created_at", time.time()),
+                    "dynamic": True
+                }
+                registry.loaded_names.add(name)
+                loaded += 1
+                
+            except Exception as e:
+                log.warning(f"[DynamicTools] Failed to load {file_info['name']}: {e}")
+        
+        log.info(f"[DynamicTools] Loaded {loaded} dynamic tools from GitHub")
+        return loaded
+    
+    except Exception as e:
+        log.error(f"[DynamicTools] Failed to load from GitHub: {e}")
+        return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SELF-REPAIR / TROUBLESHOOTING TOOLS
+# ─────────────────────────────────────────────────────────────────────────────
+
+SELF_REPAIR_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "self_repair",
+        "description": "Analyze and fix issues in the bot's own code or configuration. Can create diagnostic tools, patch bugs, or optimize performance.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "issue_description": {
+                    "type": "string",
+                    "description": "What's broken or needs fixing"
+                },
+                "target": {
+                    "type": "string",
+                    "enum": ["tool", "config", "memory", "performance", "unknown"],
+                    "description": "What area to investigate"
+                },
+                "create_fix_tool": {
+                    "type": "boolean",
+                    "description": "Whether to create a new dynamic tool to fix the issue"
+                }
+            },
+            "required": ["issue_description"]
+        }
+    }
+
+
+def execute_self_repair(
+    issue_description: str,
+    target: str = "unknown",
+    create_fix_tool: bool = False
+) -> Dict[str, Any]:
+    """
+    Self-repair: analyze issue, optionally create a fix tool.
+    This is a meta-tool - the bot uses it to fix itself.
+    """
+    from services.escalation import execute_mixup_escalate
+    from services.storage import profile_get
+    
+    # For now, escalate to creator with full context
+    # In future, this could auto-generate fix tools
+    profile = profile_get("system")
+    
+    # Escalate with full context for creator to guide repair
+    from services.escalation import silent_creator_notify
+    result = silent_creator_notify(
+        user_id="system",
+        user_jid="system@self",
+        wrong_name="self_repair",
+        user_message=f"Self-repair requested: {issue_description}",
+        bot_response=f"Target: {target}, Create fix tool: {create_fix_tool}"
+    )
+    
+    return {
+        "ok": True,
+        "message": "Self-repair request sent to creator. They'll guide the fix.",
+        "escalation_id": result.get("escalation_id")
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DYNAMIC TOOLS LIST TOOL
+# ─────────────────────────────────────────────────────────────────────────────
+
+LIST_DYNAMIC_TOOLS_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "list_dynamic_tools",
+        "description": "List all dynamically created tools with their metadata.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    }
+}
+
+
+def execute_list_dynamic_tools() -> Dict[str, Any]:
+    registry = get_dynamic_registry()
+    tools = registry.list_dynamic()
+    return {
+        "ok": True,
+        "tools": tools,
+        "count": len(tools)
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REMOVE DYNAMIC TOOL
+# ─────────────────────────────────────────────────────────────────────────────
+
+REMOVE_DYNAMIC_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "remove_dynamic_tool",
+        "description": "Remove a dynamically created tool.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the dynamic tool to remove (with dyn_ prefix)"
+                }
+            },
+            "required": ["name"]
+        }
+    }
+}
+
+
+def execute_remove_dynamic_tool(name: str) -> Dict[str, Any]:
+    if not name.startswith("dyn_"):
+        name = f"dyn_{name}"
+    
+    registry = get_dynamic_registry()
+    if registry.unregister(name):
+        # Also remove from GitHub (best effort)
+        try:
+            repo = cfg("github_backup_repo") or ""
+            if repo:
+                from services.github_search import github_get_file
+                github_get_file(repo, f"dynamic_tools/{name}.json")  # Check exists
+                # Note: GitHub API doesn't have delete in our wrapper, would need to add
+        except Exception:
+            pass
+        return {"ok": True, "message": f"Removed {name}"}
+    return {"ok": False, "error": f"Tool {name} not found or not dynamic"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BOOTSTRAP
+# ─────────────────────────────────────────────────────────────────────────────
+
+def bootstrap_dynamic_tools() -> int:
+    """Load dynamic tools on startup. Call during bot initialization."""
+    return load_dynamic_tools_from_github()

@@ -1,4 +1,19 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: crimson-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   crimson-bot:
     build:
       context: .
@@ -12,9 +27,13 @@ services:
     environment:
       - BOT_PORT=5000
       - MEDIA_ROOT=/media
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - bot_data:/data
       - media_data:/media
+    depends_on:
+      redis:
+        condition: service_healthy
 
   whatsapp-bridge:
     build:
@@ -37,7 +56,28 @@ services:
     depends_on:
       - crimson-bot
 
+  # RQ Worker for background job processing
+  crimson-worker:
+    build:
+      context: .
+      dockerfile: ./crimson-bot/Dockerfile
+    container_name: crimson-worker
+    restart: unless-stopped
+    env_file:
+      - ./crimson-bot/.env
+    environment:
+      - MEDIA_ROOT=/media
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - bot_data:/data
+      - media_data:/media
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: python worker.py default media research trading maintenance
+
 volumes:
   bot_data:
   bridge_data:
   media_data:
+  redis_data:

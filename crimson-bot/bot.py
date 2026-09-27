@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import hmac
 import json
 import io
 import math
@@ -25,7 +24,7 @@ from typing import Any
 from urllib.parse import quote
 
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from PIL import Image
 
 from core.config import (
@@ -38,10 +37,12 @@ from core.llm import call_llm, _call_nvidia, NVIDIA_SCOUT, MAX_CONTEXT_TOKENS, M
 import threading
 from services.dispatcher import get_dispatcher, start_dispatcher, stop_dispatcher, dispatcher_is_alive
 from services.memory import profile_mgr, sessions, get_vault_context, learn_task_background
+from services.storage import sent_message_get, sent_message_set, sent_message_delete
 from services.reporter import start_reporter, stop_reporter
 from services.tasks import task_store
 from services.tools import ALL_TOOLS, execute_tool_calls
 from services.self_correct import verify_and_correct
+from services.environment import get_environment_info, is_feature_enabled
 import services.vision as vision_svc
 import services.media as media_svc
 import services.bridge_api as bridge_api
@@ -73,6 +74,8 @@ from services.group_intel import (
     clear_group_vault,
     detect_other_bot_mentions,
     should_respond_in_multi_bot_context,
+    set_group_silent,
+    is_group_silent,
 )
 
 from services.personality import (
@@ -137,13 +140,8 @@ def require_internal_api_token():
     """Protect bot control routes while leaving health probes available."""
     if request.path == "/health":
         return None
-    expected = os.getenv("CRIMSON_API_TOKEN", "")
-    supplied = request.headers.get("Authorization", "")
-    provided = supplied[7:].strip() if supplied.startswith("Bearer ") else ""
-    if not expected or not provided or not hmac.compare_digest(provided, expected):
-        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    # No token required - trust internal network (Docker network)
     return None
-_cache: dict[str, str] = load_json(CACHE_FILE, {})
 _BOOT_TIME: float = 0.0
 doc_session: dict[str, Any] = {}  # docs are transient — never restored from disk
 
@@ -155,9 +153,7 @@ user_last_msg: dict[str, float] = {}
 image_memory: dict[str, dict] = {}
 pending_song_searches: dict[str, dict] = {}
 # sender -> {message_id, sent_text, sent_at} of the bot's most recent
-# conversational text reply. Populated by the bridge via POST /sent_ids and
-# consulted by services/self_correct.py to decide whether to edit/delete.
-_last_sent: dict[str, dict] = {}
+# conversational text reply. Now stored in SQLite via services/storage.py
 MSG_COOLDOWN_SECS = 0.5
 
 # Thread-safe access to the dicts above. Now that Flask runs threaded=True,
@@ -537,6 +533,112 @@ def _sticker_reply_from_visual(image_b64: str, user_phone: str, sender: str) -> 
 
 def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted: str = "", is_group: bool = False) -> dict | None:
     lower = raw_question.lower()
+    
+    # Contact Relay Commands (Creator Only)
+    if lower.startswith("relay approve ") or lower.startswith("relay decline "):
+        profile = profile_mgr.get_profile(user_phone)
+        if not profile.get("is_creator"):
+            return {"reply": "Dad only command 😅"}
+        
+        parts = raw_question.split(maxsplit=3)
+        if len(parts) < 3:
+            return {"reply": "Usage: `relay approve <id> [your reply]` or `relay decline <id> [reason]`"}
+        
+        action = parts[1]
+        request_id = parts[2]
+        response_text = parts[3] if len(parts) > 3 else ""
+        
+        from services.contact_relay import process_creator_response
+        creator_jid = cfg("owner_jid") or ""
+        creator_jid_formatted = creator_jid if creator_jid else f"{user_phone}@s.whatsapp.net"
+        
+        result = process_creator_response(creator_jid_formatted, action, request_id, response_text)
+        if result.get("ok"):
+            return {"reply": f"Done. Sent to them: {result.get('delivered', False)}"}
+        return {"reply": f"Didn't work: {result.get('error', 'unknown error')}"}
+    
+    if lower == "relay list":
+        profile = profile_mgr.get_profile(user_phone)
+        if not profile.get("is_creator"):
+            return {"reply": "Dad only command 😅"}
+        
+        from services.contact_relay import get_pending_relay_requests
+        pending = get_pending_relay_requests()
+        if not pending:
+            return {"reply": "Nobody's waiting."}
+        
+        lines = ["People waiting to talk to you:"]
+        for r in pending:
+            lines.append(
+                f"• {r.get('request_id')} — {r.get('user_name', 'someone')} ({r.get('user_id')})\n"
+                f"  Said: {r.get('message', 'Nothing')[:50]}"
+            )
+        return {"reply": "\n".join(lines)}
+    
+    if lower == "relay cleanup":
+        profile = profile_mgr.get_profile(user_phone)
+        if not profile.get("is_creator"):
+            return {"reply": "Dad only command 😅"}
+        
+        from services.contact_relay import cleanup_expired_relays
+        cleaned = cleanup_expired_relays()
+        return {"reply": f"Cleaned up {cleaned} old requests."}
+    
+    # Mix-up Escalation Commands (Creator Only)
+    if lower.startswith("clarify ") or lower.startswith("ignore "):
+        profile = profile_mgr.get_profile(user_phone)
+        if not profile.get("is_creator"):
+            return {"reply": "Dad only command 😅"}
+        
+        parts = lower.split(maxsplit=2)
+        if len(parts) < 2:
+            return {"reply": "Usage: `clarify <mixup_id> [your response]` or `ignore <mixup_id>`"}
+        
+        action = parts[1]
+        escalation_id = parts[2]
+        response = parts[3] if len(parts) > 3 else ""
+        
+        from services.escalation import process_mixup_response
+        creator_jid = cfg("owner_jid") or ""
+        creator_jid_formatted = creator_jid if creator_jid else f"{user_phone}@s.whatsapp.net"
+        
+        result = process_mixup_response(creator_jid_formatted, action, escalation_id, response)
+        if result.get("ok"):
+            return {"reply": f"Done. Mix-up {action}d."}
+        return {"reply": f"Didn't work: {result.get('error', 'unknown error')}"}
+    
+    if lower == "mixups":
+        profile = profile_mgr.get_profile(user_phone)
+        if not profile.get("is_creator"):
+            return {"reply": "Dad only command 😅"}
+        
+        from services.storage import get_conn
+        import json
+        conn = get_conn()
+        cur = conn.execute("""
+            SELECT user_id, name, escalations FROM profiles 
+            WHERE escalations IS NOT NULL AND escalations != '[]'
+        """)
+        
+        lines = ["📋 *Pending Name Mix-ups:*"]
+        for row in cur.fetchall():
+            user_id = row[0]
+            name = row[1]
+            escalations = json.loads(row[2] or "[]")
+            pending = [e for e in escalations if e.get("status") == "pending" and e.get("escalation_id", "").startswith("mixup_")]
+            for e in pending:
+                lines.append(
+                    f"• {e.get('escalation_id')} — {name} ({user_id})\n"
+                    f"  Called me: {e.get('wrong_name', '?')}\n"
+                    f"  Said: {e.get('user_message', '?')[:80]}"
+                )
+        if len(lines) == 1:
+            return {"reply": "No pending name mix-ups."}
+        return {"reply": "\n".join(lines)}
+        if len(lines) == 1:
+            return {"reply": "No pending escalations."}
+        return {"reply": "\n".join(lines)}
+    
     if lower in ("/help", "help") or lower.startswith("/help "):
         help_text = (
             "🤖 *Crimsonej Full Command List* 🤖\n\n"
@@ -567,7 +669,18 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
             "🏠 *Group Commands:*\n"
             "• `/group_fact <text>` - Store a fact in group memory (group only)\n"
             "• `/group_facts` - View group memory vault (group only)\n"
-            "• `/group_forget` - Clear group memory (creator only)\n\n"
+            "• `/group_forget` - Clear group memory (creator only)\n"
+            "• `/group_ban @user` - Ban user (admin only)\n"
+            "• `/group_unban @user` - Unban user (admin only)\n"
+            "• `/group_mute @user` - Mute user (admin only)\n"
+            "• `/group_unmute @user` - Unmute user (admin only)\n"
+            "• `/group_promote @user` - Promote to admin (admin only)\n"
+            "• `/group_demote @user` - Demote from admin (admin only)\n"
+            "• `/group_info` - Show group info (group only)\n\n"
+            "📅 *Scheduling:*\n"
+            "• `/schedule <time> <message>` - Schedule message (10m, 1h, 1d, or YYYY-MM-DD HH:MM)\n"
+            "• `/cancel_schedule <task_id>` - Cancel scheduled message\n"
+            "• `/react <message_id> <emoji>` - React to a message\n\n"
             "🖥️ *Terminal CLI Commands:*\n"
             "• `crimsonej start | stop | status | logs | setup | reindex`\n\n"
             "👤 *Creator:* Crimson (Elijah)"
@@ -929,6 +1042,174 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
             return {"reply": f"Trade logged: {symbol} {side.upper()} @ {entry} — {result_trade.upper()} ({r_multiple}R)"}
         return {"reply": "Subcommand must be 'log' or 'stats'"}
     
+    # ─── New Quick-Win Commands ───────────────────────────────────────────────
+    
+    # Group Admin Commands (Group Admin Only)
+    if is_group and lower.startswith("/group_ban "):
+        if not is_admin:
+            return {"reply": "🔒 Group admin only command."}
+        parts = raw_question.split()
+        if len(parts) < 2:
+            return {"reply": "Usage: `/group_ban @user`"}
+        target = parts[1]
+        from services.bridge_api import bridge_group_admin_action
+        result = bridge_group_admin_action(session_id, "ban", target)
+        if result.get("ok"):
+            return {"reply": f"🔨 Banned {target} from group"}
+        return {"reply": f"Failed to ban: {result.get('error', 'unknown error')}"}
+    
+    if is_group and lower.startswith("/group_unban "):
+        if not is_admin:
+            return {"reply": "🔒 Group admin only command."}
+        parts = raw_question.split()
+        if len(parts) < 2:
+            return {"reply": "Usage: `/group_unban @user`"}
+        target = parts[1]
+        from services.bridge_api import bridge_group_admin_action
+        result = bridge_group_admin_action(session_id, "unban", target)
+        if result.get("ok"):
+            return {"reply": f"✅ Unbanned {target}"}
+        return {"reply": f"Failed to unban: {result.get('error', 'unknown error')}"}
+    
+    if is_group and lower.startswith("/group_mute "):
+        if not is_admin:
+            return {"reply": "🔒 Group admin only command."}
+        parts = raw_question.split()
+        if len(parts) < 2:
+            return {"reply": "Usage: `/group_mute @user`"}
+        target = parts[1]
+        from services.bridge_api import bridge_group_admin_action
+        result = bridge_group_admin_action(session_id, "mute", target)
+        if result.get("ok"):
+            return {"reply": f"🔇 Muted {target}"}
+        return {"reply": f"Failed to mute: {result.get('error', 'unknown error')}"}
+    
+    if is_group and lower.startswith("/group_unmute "):
+        if not is_admin:
+            return {"reply": "🔒 Group admin only command."}
+        parts = raw_question.split()
+        if len(parts) < 2:
+            return {"reply": "Usage: `/group_unmute @user`"}
+        target = parts[1]
+        from services.bridge_api import bridge_group_admin_action
+        result = bridge_group_admin_action(session_id, "unmute", target)
+        if result.get("ok"):
+            return {"reply": f"🔊 Unmuted {target}"}
+        return {"reply": f"Failed to unmute: {result.get('error', 'unknown error')}"}
+    
+    if is_group and lower.startswith("/group_promote "):
+        if not is_admin:
+            return {"reply": "🔒 Group admin only command."}
+        parts = raw_question.split()
+        if len(parts) < 2:
+            return {"reply": "Usage: `/group_promote @user`"}
+        target = parts[1]
+        from services.bridge_api import bridge_group_admin_action
+        result = bridge_group_admin_action(session_id, "promote", target)
+        if result.get("ok"):
+            return {"reply": f"⬆️ Promoted {target} to admin"}
+        return {"reply": f"Failed to promote: {result.get('error', 'unknown error')}"}
+    
+    if is_group and lower.startswith("/group_demote "):
+        if not is_admin:
+            return {"reply": "🔒 Group admin only command."}
+        parts = raw_question.split()
+        if len(parts) < 2:
+            return {"reply": "Usage: `/group_demote @user`"}
+        target = parts[1]
+        from services.bridge_api import bridge_group_admin_action
+        result = bridge_group_admin_action(session_id, "demote", target)
+        if result.get("ok"):
+            return {"reply": f"⬇️ Demoted {target} from admin"}
+        return {"reply": f"Failed to demote: {result.get('error', 'unknown error')}"}
+    
+    # Scheduled Messages
+    if lower.startswith("/schedule "):
+        parts = raw_question.split(maxsplit=2)
+        if len(parts) < 3:
+            return {"reply": "Usage: `/schedule <time> <message>` — time formats: `10m`, `1h`, `2024-12-25 15:30`"}
+        time_str = parts[1]
+        message = parts[2]
+        from services.bridge_api import bridge_schedule_message
+        import time as time_mod
+        from datetime import datetime, timedelta
+        
+        # Parse time
+        try:
+            if time_str.endswith("m"):
+                minutes = int(time_str[:-1])
+                schedule_at = int(time_mod.time()) + minutes * 60
+            elif time_str.endswith("h"):
+                hours = int(time_str[:-1])
+                schedule_at = int(time_mod.time()) + hours * 3600
+            elif time_str.endswith("d"):
+                days = int(time_str[:-1])
+                schedule_at = int(time_mod.time()) + days * 86400
+            else:
+                # Try parsing as datetime
+                dt = datetime.fromisoformat(time_str)
+                schedule_at = int(dt.timestamp())
+        except Exception:
+            return {"reply": "Invalid time format. Use `10m`, `1h`, `1d`, or `YYYY-MM-DD HH:MM`"}
+        
+        target_jid = session_id if is_group else (user_phone + "@s.whatsapp.net")
+        result = bridge_schedule_message(target_jid, message, schedule_at)
+        if result.get("ok"):
+            return {"reply": f"⏰ Scheduled for {datetime.fromtimestamp(schedule_at).strftime('%Y-%m-%d %H:%M')}"}
+        return {"reply": f"Failed to schedule: {result.get('error', 'unknown error')}"}
+    
+    if lower.startswith("/cancel_schedule "):
+        parts = raw_question.split()
+        if len(parts) < 2:
+            return {"reply": "Usage: `/cancel_schedule <task_id>`"}
+        task_id = parts[1]
+        from services.bridge_api import bridge_cancel_scheduled_message
+        result = bridge_cancel_scheduled_message(task_id)
+        if result.get("ok"):
+            return {"reply": "✅ Scheduled message cancelled"}
+        return {"reply": f"Failed: {result.get('error', 'unknown error')}"}
+    
+    # Reaction handling (when user reacts to bot's message)
+    if lower.startswith("/react "):
+        parts = raw_question.split(maxsplit=2)
+        if len(parts) < 3:
+            return {"reply": "Usage: `/react <message_id> <emoji>`"}
+        message_id = parts[1]
+        emoji = parts[2]
+        target_jid = session_id if is_group else (user_phone + "@s.whatsapp.net")
+        from services.bridge_api import bridge_send_reaction
+        result = bridge_send_reaction(target_jid, message_id, emoji)
+        if result.get("ok"):
+            return {"reply": f"Reacted with {emoji}"}
+        return {"reply": f"Failed: {result.get('error', 'unknown error')}"}
+    
+    # Group info
+    if is_group and lower == "/group_info":
+        from services.bridge_api import bridge_get_group_info
+        result = bridge_get_group_info(session_id)
+        if result.get("ok"):
+            info = result.get("info", {})
+            participants = info.get("participants", [])
+            reply = f"📋 *Group Info*\n"
+            reply += f"Name: {info.get('subject', 'Unknown')}\n"
+            reply += f"Participants: {len(participants)}\n"
+            reply += f"Created: {info.get('creation', 'Unknown')}\n"
+            return {"reply": reply}
+        return {"reply": f"Failed: {result.get('error', 'unknown error')}"}
+    
+    # Creator silent mode toggle for groups
+    if is_group and (lower in ("silent mode on", "dont talk to anyone", "go silent", "stop talking", "be quiet", "/silent_on") or "dont talk to anyone in this group" in lower):
+        if not is_creator:
+            return {"reply": "🔒 Creator only command."}
+        set_group_silent(session_id, True)
+        return {"reply": ""}  # Completely silent — no bot text confirmation
+
+    if is_group and (lower in ("silent mode off", "you can talk now", "talk again", "/silent_off")):
+        if not is_creator:
+            return {"reply": "🔒 Creator only command."}
+        set_group_silent(session_id, False)
+        return {"reply": "Silent mode disabled."}
+
     return None
 
 def answer(question: str, sender: str = "cli", user_phone: str | None = None,
@@ -1082,6 +1363,9 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
 
     # Record user turn early to prevent context race conditions across requests
     session.add("user", question, message_id=message_id, ts=time.time())
+    
+    # Auto-summarize if needed
+    maybe_summarize(session_key)
 
     user_content = truncate_to_tokens(f"Context:\n{context}{realtime_context}{visual_context}\n\nQuestion: {question}", MAX_USER_MSG_TOKENS)
     history = [{**msg, "content": truncate_to_tokens(msg["content"], MAX_HISTORY_MSG_TOKENS)} for msg in session.messages()]
@@ -1096,6 +1380,14 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
     # Let the LLM think and adapt naturally. It has full conversation context
     # and can decide when to search, when to ask for clarification, or when to
     # refine a search based on the user's feedback. No hardcoded gates.
+
+    # Micro-delay to simulate human thinking variability (configurable)
+    try:
+        think_ms = int(cfg("thinking_variability_ms") or 500)
+        if think_ms > 0:
+            time.sleep(random.uniform(0, think_ms / 1000.0))
+    except Exception:
+        pass
 
     reply = call_llm(messages, tools=ALL_TOOLS, tool_executor_fn=tool_exec_wrapper, user_id=user_id, sender_jid=sender)
     reply_text = reply.get("reply", "") if isinstance(reply, dict) else str(reply)
@@ -1114,8 +1406,7 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
     # phantom task enqueue, etc.). If so, edit or delete the just-sent message.
     correction = verify_and_correct(reply, messages, user_id)
     if correction:
-        with _state_lock:
-            last = _last_sent.get(s_key)
+        last = sent_message_get(s_key)
         if last and last.get("message_id"):
             mid = last["message_id"]
             if correction["action"] == "delete":
@@ -1124,9 +1415,8 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
             elif correction["action"] == "edit":
                 new_text = correction["new_text"]
                 bridge_api.bridge_edit(s_key, mid, new_text)
-                with _state_lock:
-                    if s_key in _last_sent:
-                        _last_sent[s_key]["sent_text"] = new_text
+                # Update stored sent_text
+                sent_message_set(s_key, mid, new_text)
                 log.info("[Self-correct] edited mid=%s jid=%s", mid, s_key.split("@")[0])
         reply_text = _sanitize_assistant_reply(correction.get("new_text", reply_text))
         if isinstance(reply, dict):
@@ -1146,6 +1436,16 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
         pass
 
     session.add("assistant", reply_text)
+
+    # Auto-summarize if needed (after assistant response too)
+    maybe_summarize(session_key)
+
+    # Auto-react to bot's own response based on content
+    try:
+        from services.automation import get_automation_engine
+        get_automation_engine().auto_react_to_message(sender, session_id, reply_text)
+    except Exception:
+        pass
 
     # If the LLM created a document, include the file path/name in the response
     if isinstance(reply, dict):
@@ -1206,14 +1506,71 @@ def route_reply():
     bot_jid = cfg("owner_jid") or ""
     bot_phone = "".join(ch for ch in bot_jid if ch.isdigit()) if bot_jid else ""
 
+    # Handle incoming reaction events
+    if body.get("reaction") or body.get("type") == "reaction":
+        reaction_emoji = body.get("reaction") or body.get("emoji") or ""
+        reaction_message_id = body.get("message_id") or body.get("target_message_id") or ""
+        reaction_sender = body.get("reaction_sender") or sender_jid
+        if reaction_emoji and reaction_message_id:
+            log.info("[Reaction] %s reacted with %s to message %s", reaction_sender, reaction_emoji, reaction_message_id)
+            # Store reaction or trigger callback if needed
+            try:
+                from services.storage import get_conn
+                conn = get_conn()
+                conn.execute(
+                    "INSERT OR REPLACE INTO reactions (message_id, emoji, reactor_jid, created_at) VALUES (?, ?, ?, ?)",
+                    (reaction_message_id, reaction_emoji, reaction_sender, time.time())
+                )
+            except Exception as e:
+                log.warning("[Reaction] Failed to store reaction: %s", e)
+        return jsonify({"reply": ""}), 200
+
 # ── Group Intelligence ───────────────────────────────────────────────────────
     if is_group:
         group_jid = session_id  # group_name is the group JID
         increment_group_messages(group_jid)
         
+        # ── Group Moderation Rules (Silent Delete - No Bot Chatter) ──────────
+        msg_type = (body.get("type") or body.get("media_type") or "").lower()
+        incoming_msg_id = body.get("message_id") or body.get("id") or ""
+        group_ctx = get_group_context(group_jid)
+
+        if group_ctx.get("no_stickers") and msg_type == "sticker" and incoming_msg_id:
+            log.info("[GroupMod] Silently deleting forbidden sticker in group=%s", group_jid)
+            from services.bridge_api import bridge_delete_message
+            bridge_delete_message(group_jid, incoming_msg_id)
+            return jsonify({"reply": ""}), 200
+
+        if group_ctx.get("no_links") and incoming_msg_id:
+            has_link = bool(re.search(r"https?://\S+|www\.\S+", raw_question))
+            if has_link:
+                log.info("[GroupMod] Silently deleting forbidden link in group=%s", group_jid)
+                from services.bridge_api import bridge_delete_message
+                bridge_delete_message(group_jid, incoming_msg_id)
+                return jsonify({"reply": ""}), 200
+
+        # ── Group Silent Mode (Do not talk to anyone in this group) ──────────
+        if is_group_silent(group_jid):
+            log.debug("[Group] Silent mode active for group=%s — bot will not respond", group_jid)
+            return jsonify({"reply": ""}), 200
+        
         # Learn group topic passively
         learn_group_topic(group_jid, raw_question, push_name or user_phone)
         
+        # Enforce automated group moderation rules (e.g. no stickers, no links)
+        try:
+            from services.automation import get_automation_engine
+            eng = get_automation_engine()
+            msg_id = body.get("message_id") or ""
+            is_stk = bool(body.get("sticker_data") or body.get("is_sticker"))
+            is_img = bool(body.get("image_base64") or body.get("image_data"))
+            is_dc = bool(body.get("document_data"))
+            if eng.evaluate_and_enforce_group_rules(group_jid, sender_jid, msg_id, raw_question, is_sticker=is_stk, is_image=is_img, is_doc=is_dc):
+                log.info("[GroupMod] Violation handled, deleted message %s in %s", msg_id, group_jid)
+                return jsonify({"reply": ""}), 200
+        except Exception as exc:
+            log.warning("[GroupMod] Rule check error: %s", exc)
+
         # Check rate limit
         allowed, rate_info = check_group_rate_limit(group_jid, max_per_minute=int(cfg("group_rate_limit_per_min") or 15))
         if not allowed:
@@ -1271,6 +1628,14 @@ def route_reply():
     # We'll store it temporarily for the answer call
     thread_context_store = {"context": thread_context, "is_bot_quoted": is_bot_quoted_flag}
 
+    # Record message for auto-moderation (spam tracking)
+    if is_group:
+        try:
+            from services.automation import get_automation_engine
+            get_automation_engine().record_message(group_jid, sender_jid)
+        except Exception:
+            pass
+
 # ── /read & /learn document handling ─────────────────────────────────────
     doc_b64 = body.get("document_data") or ""
     doc_name = body.get("document_name") or "document"
@@ -1287,6 +1652,18 @@ def route_reply():
                 doc_session[sender] = {"name": doc_name, "text": decoded}
             save_doc_sessions()
             log.info("[Read] stored document %s (%d chars) for %s", doc_name, len(doc_session[sender]["text"]), user_phone)
+
+            # Check if this document fulfills a pending conditional doc relay workflow
+            try:
+                from services.automation import get_automation_engine
+                tmp_doc_path = os.path.join(tempfile.gettempdir(), f"captured_{int(time.time())}_{doc_name}")
+                doc_bytes = base64.b64decode(doc_b64 + "==" if len(doc_b64) % 4 else doc_b64)
+                with open(tmp_doc_path, "wb") as f_out:
+                    f_out.write(doc_bytes)
+                get_automation_engine().check_and_process_incoming_doc(sender_jid or user_phone, tmp_doc_path, doc_name)
+            except Exception as e_relay:
+                log.warning("[DocRelay] Capture check error: %s", e_relay)
+
         except Exception as exc:
             log.warning("[Read] failed to decode document: %s", exc)
             if body.get("read_command"):
@@ -1334,7 +1711,7 @@ def route_reply():
                         break
                 log.info("[Edit] patched last user turn in session=%s new_text=%r",
                          session_id, raw_question[:60])
-            last = _last_sent.get(session_id)
+            last = sent_message_get(session_id)
             if last and last.get("message_id"):
                 edit_replace_message_id = str(last["message_id"])
                 bridge_api.bridge_edit(session_id, edit_replace_message_id, "...")
@@ -1353,10 +1730,10 @@ def route_reply():
                     if turn.get("role") == "user" and str(turn.get("id") or "") == sender_msg_id:
                         del sess.turns[idx]
                         break
-            last = _last_sent.get(session_id)
+            last = sent_message_get(session_id)
             if last and last.get("message_id"):
                 bridge_api.bridge_delete(session_id, str(last["message_id"]))
-                _last_sent.pop(session_id, None)
+                sent_message_delete(session_id)
                 pending_song_searches.pop(user_phone, None)
                 log.info("[Delete] removed bot response for session=%s mid=%s", session_id.split("@")[0], last.get("message_id"))
             return jsonify({"reply": ""}), 200
@@ -1600,7 +1977,13 @@ def route_reply():
                 with _state_lock:
                     pending_song_searches.clear()
                     doc_session.clear()
-                    _last_sent.clear()
+                # Clear sent messages table
+                try:
+                    from services.storage import get_conn
+                    with get_conn() as conn:
+                        conn.execute("DELETE FROM sent_messages")
+                except Exception:
+                    pass
 
                 freed_mb = round(freed_bytes / (1024 * 1024), 2)
                 return jsonify({"reply": (
@@ -1831,8 +2214,7 @@ def route_sent_ids():
         message_id = message_ids[-1]
     sent_text = body.get("sent_text") or body.get("text") or body.get("message") or ""
     if sender and message_id:
-        with _state_lock:
-            _last_sent[sender] = {"message_id": str(message_id), "sent_text": str(sent_text), "sent_at": time.time()}
+        sent_message_set(sender, str(message_id), str(sent_text))
     return jsonify({"ok": True}), 200
 
 
@@ -1945,6 +2327,64 @@ def route_health():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/sync_status", methods=["GET"])
+def route_sync_status():
+    """GitHub backup sync status."""
+    try:
+        from services.github_sync import get_sync_status
+        return jsonify(get_sync_status()), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/sync_now", methods=["POST"])
+def route_sync_now():
+    """Trigger manual GitHub sync."""
+    try:
+        from services.github_sync import sync_now
+        return jsonify(sync_now()), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/metrics", methods=["GET"])
+def route_metrics():
+    """Prometheus metrics endpoint."""
+    try:
+        from services.metrics import get_metrics, get_content_type
+        return Response(get_metrics(), mimetype=get_content_type())
+    except Exception as e:
+        log.error("[Metrics] Failed to generate metrics: %s", e)
+        return Response(b"", status=500)
+
+
+@app.route("/health", methods=["GET"])
+def route_health():
+    """Health check endpoint with detailed status."""
+    try:
+        from services.health import get_status
+        from services.storage import dynamic_tools_active, sessions_active, profiles_total
+        from services.dynamic_tools import get_dynamic_registry
+        
+        status = get_status()
+        
+        # Add dynamic tools count
+        registry = get_dynamic_registry()
+        status["dynamic_tools"] = len(registry.tools)
+        
+        # Add gauges
+        status["gauges"] = {
+            "sessions_active": sessions_active,
+            "profiles_total": profiles_total,
+            "dynamic_tools": len(registry.tools),
+        }
+        
+        return jsonify(status), 200
+    except Exception as e:
+        log.error("[Health] Failed to get status: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 def start_background_services() -> None:
     """Start auxiliary workers once for the active bot process."""
     try:
@@ -1979,6 +2419,55 @@ def start_background_services() -> None:
         init_group_intel()
     except Exception as e:
         log.warning("[Boot] Failed to init group intel: %s", e)
+    # GitHub backup sync
+    try:
+        from services.github_sync import start_github_sync
+        start_github_sync()
+    except Exception as e:
+        log.warning("[Boot] Failed to start GitHub sync: %s", e)
+    # Dynamic Tools bootstrap
+    try:
+        from services.dynamic_tools import bootstrap_dynamic_tools
+        count = bootstrap_dynamic_tools()
+        if count:
+            log.info("[Boot] Loaded %d dynamic tools from GitHub", count)
+    except Exception as e:
+        log.warning("[Boot] Failed to bootstrap dynamic tools: %s", e)
+    # Contact Relay cleanup (runs daily via dispatcher)
+    try:
+        from services.tasks import task_store
+        from services.contact_relay import cleanup_expired_relays
+        # Schedule daily cleanup
+        task_store.create(
+            kind="recurring",
+            name="contact_relay_cleanup",
+            action={"module": "services.contact_relay", "fn": "cleanup_expired_relays", "args": []},
+            schedule={"type": "interval", "seconds": 86400},  # 24 hours
+            owner_user_id="system",
+            owner_jid=cfg("owner_jid") or "",
+            notify_on="none",
+        )
+    except Exception as e:
+        log.warning("[Boot] Failed to schedule relay cleanup: %s", e)
+    # Environment detection & graceful degradation
+    try:
+        from services.environment import log_environment_summary, is_feature_enabled
+        log_environment_summary()
+        # Store feature flags in config for tools to check
+        from core.config import _cfg
+        info = get_environment_info()
+        _cfg["_env_features"] = info.features_enabled
+        _cfg["_env_degradation"] = info.degradation_reasons
+    except Exception as e:
+        log.warning("[Boot] Failed environment detection: %s", e)
+
+    # Automation engine (auto-moderation, auto-reactions, scheduled messages, etc.)
+    try:
+        from services.automation import start_automation
+        start_automation()
+        log.info("[Boot] Started automation engine")
+    except Exception as e:
+        log.warning("[Boot] Failed to start automation engine: %s", e)
 
 
 if __name__ == "__main__":

@@ -201,6 +201,18 @@ def update_group_context(group_jid: str, **kwargs) -> None:
     _save_group_state()
 
 
+def set_group_silent(group_jid: str, silent: bool = True) -> None:
+    """Toggle silent mode for a group (bot will not talk to anyone in the group)."""
+    update_group_context(group_jid, silent_mode=bool(silent))
+
+
+def is_group_silent(group_jid: str) -> bool:
+    """Check if group silent mode is enabled."""
+    ctx = get_group_context(group_jid)
+    return bool(ctx.get("silent_mode", False))
+
+
+
 def learn_group_topic(group_jid: str, message: str, sender_name: str) -> None:
     """Passively learn group topic from conversation patterns."""
     # Simple heuristic: track most discussed subjects

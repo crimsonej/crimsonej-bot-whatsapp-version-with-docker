@@ -39,5 +39,37 @@
         "timestamp": "2026-08-20T17:09:20.381330+03:00"
       }
     ]
+  },
+  "910000000001": {
+    "strikes": 0,
+    "escalation_level": 0,
+    "last_action": null,
+    "cooldown_until": 0,
+    "violation_history": []
+  },
+  "910000000002": {
+    "strikes": 0,
+    "escalation_level": 0,
+    "last_action": null,
+    "cooldown_until": 0,
+    "violation_history": []
+  },
+  "910000000004": {
+    "strikes": 0,
+    "escalation_level": 0,
+    "last_action": null,
+    "cooldown_until": 0,
+    "violation_history": [
+      {
+        "type": "doxxing",
+        "message": "@256742184690 what do you think?",
+        "timestamp": "2026-09-05T14:08:26.110183+03:00"
+      },
+      {
+        "type": "doxxing",
+        "message": "@256742184690 what do you think?",
+        "timestamp": "2026-09-05T14:08:26.128872+03:00"
+      }
+    ]
   }
 }

@@ -19,15 +19,15 @@ const {
     fetchLatestBaileysVersion,
 } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
-const axios  = require('axios');
+const axios = require('axios');
 const { Boom } = require('@hapi/boom');
-const fs   = require('fs');
+const fs = require('fs');
 const path = require('path');
-const os   = require('os');
+const os = require('os');
 const crypto = require('crypto');
 
 // Prefer IPv4 addresses first to avoid TLS errors on hosts with unroutable IPv6
-try { require('dns').setDefaultResultOrder('ipv4first'); } catch (_) {}
+try { require('dns').setDefaultResultOrder('ipv4first'); } catch (_) { }
 
 const AI_SERVER = process.env.AI_SERVER || 'http://localhost:5000/reply';
 
@@ -55,9 +55,9 @@ async function postToAIServer(payload, options = {}) {
     }
     throw lastErr;
 }
-const BOT_NAME  = process.env.BOT_NAME  || 'crimsonej';
+const BOT_NAME = process.env.BOT_NAME || 'crimsonej';
 // Use /data (HF persistent storage) when available, otherwise local fallback
-const AUTH_DIR  = process.env.AUTH_DIR  || (fs.existsSync('/data') ? '/data/auth_info_baileys' : 'auth_info_baileys');
+const AUTH_DIR = process.env.AUTH_DIR || (fs.existsSync('/data') ? '/data/auth_info_baileys' : 'auth_info_baileys');
 const API_TOKEN = process.env.BRIDGE_API_TOKEN || process.env.CRIMSON_API_TOKEN || '';
 const MEDIA_ROOT = path.resolve(process.env.MEDIA_ROOT || (fs.existsSync('/data') ? '/data/media' : path.join(os.tmpdir(), 'crimsonej-media')));
 const MAX_REQUEST_BYTES = 10 * 1024 * 1024;
@@ -235,7 +235,7 @@ function normalizeJid(sender) {
         const user = parts[0] || '';
         const domain = parts[1] || '';
         if (!user) return null;
-        
+
         // Known valid WhatsApp domains that must be preserved as-is
         const validDomains = new Set(['s.whatsapp.net', 'g.us', 'lid', 'broadcast', 'newsletter', 'c.us', 'hosted']);
         const safeDomain = (domain && (validDomains.has(domain) || domain.includes('whatsapp'))) ? domain : 's.whatsapp.net';
@@ -289,8 +289,8 @@ async function startBot() {
             console.log(`[BRIDGE] Closed – code ${code} | loggedOut: ${loggedOut}`);
 
             // Clean up old socket listeners to prevent listener leaks & zombie sockets
-            try { sock?.ws?.terminate(); } catch (_) {}
-            try { sock?.ev?.removeAllListeners(); } catch (_) {}
+            try { sock?.ws?.terminate(); } catch (_) { }
+            try { sock?.ev?.removeAllListeners(); } catch (_) { }
 
             // Detect TLS EPROTO failures and auto-fallback if repeated
             const errCode = lastDisconnect?.error?.data?.code || lastDisconnect?.error?.data?.errno || '';
@@ -301,7 +301,7 @@ async function startBot() {
                 if (eprotoCount >= EPROTO_THRESHOLD && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0') {
                     console.warn('[BRIDGE] Reached EPROTO threshold — disabling TLS certificate validation (debug)');
                     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-                    try { https.globalAgent.options.rejectUnauthorized = false; } catch (_) {}
+                    try { https.globalAgent.options.rejectUnauthorized = false; } catch (_) { }
                     setTimeout(startBot, 2000);
                     return;
                 }
@@ -326,7 +326,7 @@ async function startBot() {
             }
         } else if (connection === 'open') {
             reconnectCount = 0;
-            const botId  = sock.user?.id || '';
+            const botId = sock.user?.id || '';
             const botNum = botId.split(':')[0].split('@')[0];
             console.log(`[BRIDGE] Ready! Bot number: ${botNum}`);
             recordEvent('connection_open', `bot=${botNum}`);
@@ -408,13 +408,13 @@ async function startBot() {
             const edit = rawMsg?.editedMessage || rawMsg?.message || null;
             const inner = edit?.message || edit || {};
             const newText = inner.conversation
-                          || inner.extendedTextMessage?.text
-                          || inner.imageMessage?.caption
-                          || inner.videoMessage?.caption
-                          || inner.documentMessage?.caption
-                          || rawMsg?.conversation
-                          || rawMsg?.extendedTextMessage?.text
-                          || '';
+                || inner.extendedTextMessage?.text
+                || inner.imageMessage?.caption
+                || inner.videoMessage?.caption
+                || inner.documentMessage?.caption
+                || rawMsg?.conversation
+                || rawMsg?.extendedTextMessage?.text
+                || '';
             if (!jid || !messageId || !newText.trim()) {
                 console.log(`[EDIT] skipping - jid:${!!jid} messageId:${!!messageId} newText:${!!newText.trim()} stubType:${stubType}`);
                 continue;
@@ -522,10 +522,10 @@ async function handleMessage(msg) {
         const m = msg.message;
         const extM = m.extendedTextMessage;
         const text = m.conversation
-                  || extM?.text
-                  || m.imageMessage?.caption
-                  || m.videoMessage?.caption
-                  || '';
+            || extM?.text
+            || m.imageMessage?.caption
+            || m.videoMessage?.caption
+            || '';
 
         let imageData = null;
         if (m.imageMessage) {
@@ -582,26 +582,26 @@ async function handleMessage(msg) {
     if (userPhone === botNum) return;
 
     // Unwrap message content layers
-    const m    = msg.message;
+    const m = msg.message;
     const extM = m.extendedTextMessage;
-    const ctx  = extM?.contextInfo
-              || m.imageMessage?.contextInfo
-              || m.videoMessage?.contextInfo
-              || m.audioMessage?.contextInfo
-              || m.stickerMessage?.contextInfo
-              || m.documentMessage?.contextInfo
-              || {};
+    const ctx = extM?.contextInfo
+        || m.imageMessage?.contextInfo
+        || m.videoMessage?.contextInfo
+        || m.audioMessage?.contextInfo
+        || m.stickerMessage?.contextInfo
+        || m.documentMessage?.contextInfo
+        || {};
 
-let text = m.conversation
-          || extM?.text
-          || m.imageMessage?.caption
-          || m.videoMessage?.caption
-          || '';
+    let text = m.conversation
+        || extM?.text
+        || m.imageMessage?.caption
+        || m.videoMessage?.caption
+        || '';
 
     // Media type flags (moved up for early filter)
-    const hasImage   = !!m.imageMessage;
-    const hasVideo   = !!m.videoMessage;
-    const hasAudio   = !!m.audioMessage;
+    const hasImage = !!m.imageMessage;
+    const hasVideo = !!m.videoMessage;
+    const hasAudio = !!m.audioMessage;
     const hasSticker = !!m.stickerMessage;
     const hasDocument = !!m.documentMessage;
 
@@ -643,11 +643,11 @@ let text = m.conversation
             } else if (edited && typeof edited === 'object') {
                 // Normal case: extract text from message object
                 editText = edited.conversation
-                          || edited.extendedTextMessage?.text
-                          || edited.imageMessage?.caption
-                          || edited.videoMessage?.caption
-                          || edited.documentMessage?.caption
-                          || '';
+                    || edited.extendedTextMessage?.text
+                    || edited.imageMessage?.caption
+                    || edited.videoMessage?.caption
+                    || edited.documentMessage?.caption
+                    || '';
             } else {
                 // Unexpected type: treat as empty
                 editText = '';
@@ -705,11 +705,11 @@ let text = m.conversation
         if (protoMsg?.editedMessage) {
             const edited = protoMsg.editedMessage;
             const editText = edited.conversation
-                          || edited.extendedTextMessage?.text
-                          || edited.imageMessage?.caption
-                          || edited.videoMessage?.caption
-                          || edited.documentMessage?.caption
-                          || '';
+                || edited.extendedTextMessage?.text
+                || edited.imageMessage?.caption
+                || edited.videoMessage?.caption
+                || edited.documentMessage?.caption
+                || '';
             const origKey = protoMsg.key || msg.key || {};
             const origId = origKey.id || '';
             const origJid = origKey.remoteJid || from;
@@ -768,12 +768,12 @@ let text = m.conversation
     }
 
     // Quoted message helpers
-    const quotedMsg    = ctx.quotedMessage   || null;
-    const isReply      = !!quotedMsg;
+    const quotedMsg = ctx.quotedMessage || null;
+    const isReply = !!quotedMsg;
     const quotedSender = isReply ? (ctx.participant || ctx.remoteJid) : null;
-    const quotedText   = quotedMsg?.conversation
-                      || quotedMsg?.extendedTextMessage?.text
-                      || '';
+    const quotedText = quotedMsg?.conversation
+        || quotedMsg?.extendedTextMessage?.text
+        || '';
 
     // Helper: build a fake msg object for downloadMediaMessage and quoting
     const quotedFake = quotedMsg ? { message: quotedMsg, key: { remoteJid: from, participant: quotedSender, id: ctx.stanzaId || '' } } : null;
@@ -789,7 +789,7 @@ let text = m.conversation
         return num === botNum || (botLid && num === botLid);
     });
     const nameMentioned = text.toLowerCase().includes(BOT_NAME.toLowerCase());
-    
+
     const isReplyToBot = isReply && (() => {
         if (!quotedSender) return false;
         // Strip device suffix and @domain, e.g. "256741125387:27@s.whatsapp.net" → "256741125387"
@@ -827,7 +827,7 @@ let text = m.conversation
             const buf = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
             if (buf) {
                 try {
-                    await sock.sendPresenceUpdate('composing', from).catch(() => {});
+                    await sock.sendPresenceUpdate('composing', from).catch(() => { });
                     const res = await axios.post(AI_SERVER, {
                         sticker: true,
                         sticker_data: buf.toString('base64'),
@@ -852,11 +852,11 @@ let text = m.conversation
 
     if (isReadCmd) {
         if (hasDocument) {
-            docBuf  = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
+            docBuf = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
             docName = m.documentMessage.fileName || 'document';
             docMime = m.documentMessage.mimetype || '';
         } else if (quotedFake && quotedMsg?.documentMessage) {
-            docBuf  = await downloadMediaMessage(quotedFake, 'buffer', {}).catch(() => null);
+            docBuf = await downloadMediaMessage(quotedFake, 'buffer', {}).catch(() => null);
             docName = quotedMsg.documentMessage.fileName || 'document';
             docMime = quotedMsg.documentMessage.mimetype || '';
         }
@@ -867,18 +867,18 @@ let text = m.conversation
         }
 
         const userPrompt = text.replace(/^\/read\s*/i, '').trim();
-        await sock.sendPresenceUpdate('composing', from).catch(() => {});
+        await sock.sendPresenceUpdate('composing', from).catch(() => { });
         try {
             const res = await postToAIServer({
-                document:           true,
-                document_data:      docBuf.toString('base64'),
-                document_name:      docName,
-                document_mimetype:  docMime,
-                message:            userPrompt || '',
-                sender:             from,
-                user_phone:         userPhone,
-                is_group:           isGroup,
-                read_command:       true,
+                document: true,
+                document_data: docBuf.toString('base64'),
+                document_name: docName,
+                document_mimetype: docMime,
+                message: userPrompt || '',
+                sender: from,
+                user_phone: userPhone,
+                is_group: isGroup,
+                read_command: true,
             });
             await sendAIResponse(msg, from, res, quotedFake, quotedSender);
         } catch (e) { console.error('[/read]', e.message); }
@@ -894,11 +894,11 @@ let text = m.conversation
         let lText = text.replace(/^\/learn\s*/i, '').trim();
 
         if (hasDocument) {
-            lBuf  = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
+            lBuf = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
             lName = m.documentMessage.fileName || 'document';
             lMime = m.documentMessage.mimetype || '';
         } else if (quotedFake && quotedMsg?.documentMessage) {
-            lBuf  = await downloadMediaMessage(quotedFake, 'buffer', {}).catch(() => null);
+            lBuf = await downloadMediaMessage(quotedFake, 'buffer', {}).catch(() => null);
             lName = quotedMsg.documentMessage.fileName || 'document';
             lMime = quotedMsg.documentMessage.mimetype || '';
         } else if (quotedFake && quotedText) {
@@ -910,18 +910,18 @@ let text = m.conversation
             return;
         }
 
-        await sock.sendPresenceUpdate('composing', from).catch(() => {});
+        await sock.sendPresenceUpdate('composing', from).catch(() => { });
         try {
             const res = await postToAIServer({
-                document:           !!lBuf,
-                document_data:      lBuf ? lBuf.toString('base64') : null,
-                document_name:      lName,
-                document_mimetype:  lMime,
-                message:            lText,
-                sender:             from,
-                user_phone:         userPhone,
-                is_group:           isGroup,
-                learn_command:      true,
+                document: !!lBuf,
+                document_data: lBuf ? lBuf.toString('base64') : null,
+                document_name: lName,
+                document_mimetype: lMime,
+                message: lText,
+                sender: from,
+                user_phone: userPhone,
+                is_group: isGroup,
+                learn_command: true,
             });
             await sendAIResponse(msg, from, res, quotedFake, quotedSender);
         } catch (e) { console.error('[/learn]', e.message); }
@@ -930,10 +930,10 @@ let text = m.conversation
 
     // ── Passive document auto-detect (non-/read) ─────────────────────────────
     if (hasDocument) {
-        const docMsg   = m.documentMessage;
+        const docMsg = m.documentMessage;
         const fileName = docMsg.fileName || 'document';
         const mimetype = docMsg.mimetype || '';
-        const allowed  = [
+        const allowed = [
             'application/pdf',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -945,22 +945,22 @@ let text = m.conversation
             'text/markdown',
             'application/json',
         ];
-        const knownExts = ['.pdf','.docx','.doc','.pptx','.ppt','.xlsx','.xls','.csv','.txt','.md','.json','.py','.js','.html','.xml'];
+        const knownExts = ['.pdf', '.docx', '.doc', '.pptx', '.ppt', '.xlsx', '.xls', '.csv', '.txt', '.md', '.json', '.py', '.js', '.html', '.xml'];
         if (allowed.includes(mimetype) || knownExts.some(ext => fileName.toLowerCase().endsWith(ext))) {
             const buf = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
             if (buf) {
                 try {
-                    await sock.sendPresenceUpdate('composing', from).catch(() => {});
+                    await sock.sendPresenceUpdate('composing', from).catch(() => { });
                     const res = await postToAIServer({
-                        document:          true,
-                        document_data:     buf.toString('base64'),
-                        document_name:     fileName,
+                        document: true,
+                        document_data: buf.toString('base64'),
+                        document_name: fileName,
                         document_mimetype: mimetype,
-                        message:           text || '',
-                        sender:            from,
-                        user_phone:        userPhone,
-                        is_group:          isGroup,
-                        read_command:      false,
+                        message: text || '',
+                        sender: from,
+                        user_phone: userPhone,
+                        is_group: isGroup,
+                        read_command: false,
                     });
                     await sendAIResponse(msg, from, res, quotedFake, quotedSender);
                 } catch (e) { console.error('[Document]', e.message); }
@@ -972,14 +972,14 @@ let text = m.conversation
 
     // ── /reg-img ─────────────────────────────────────────────────────────────
     if (text.startsWith('/reg-img')) {
-        let imgBuf  = null;
+        let imgBuf = null;
         let imgMime = 'image/jpeg';
 
         if (hasImage) {
-            imgBuf  = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
+            imgBuf = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
             imgMime = m.imageMessage?.mimetype || 'image/jpeg';
         } else if (quotedFake && quotedMsg?.imageMessage) {
-            imgBuf  = await downloadMediaMessage(quotedFake, 'buffer', {}).catch(() => null);
+            imgBuf = await downloadMediaMessage(quotedFake, 'buffer', {}).catch(() => null);
             imgMime = quotedMsg.imageMessage?.mimetype || 'image/jpeg';
         }
 
@@ -988,7 +988,7 @@ let text = m.conversation
             return;
         }
         try {
-            await sock.sendPresenceUpdate('composing', from).catch(() => {});
+            await sock.sendPresenceUpdate('composing', from).catch(() => { });
             const res = await postToAIServer({
                 message: text,
                 image_base64: imgBuf.toString('base64'),
@@ -1005,27 +1005,27 @@ let text = m.conversation
 
     // ── /sticker ─────────────────────────────────────────────────────────────
     if (text.startsWith('/sticker') || text === '/sticker') {
-        let mediaBuf  = null;
+        let mediaBuf = null;
         let mediaType = null;
 
         if (hasImage) {
-            mediaBuf  = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
+            mediaBuf = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
             mediaType = 'image';
         } else if (hasVideo) {
-            mediaBuf  = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
+            mediaBuf = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
             mediaType = 'video';
         } else if (hasSticker) {
             // stickers are already webp; download and send back
-            mediaBuf  = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
+            mediaBuf = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
             mediaType = 'sticker';
         } else if (quotedFake && quotedMsg?.imageMessage) {
-            mediaBuf  = await downloadMediaMessage(quotedFake, 'buffer', {}).catch(() => null);
+            mediaBuf = await downloadMediaMessage(quotedFake, 'buffer', {}).catch(() => null);
             mediaType = 'image';
         } else if (quotedFake && quotedMsg?.videoMessage) {
-            mediaBuf  = await downloadMediaMessage(quotedFake, 'buffer', {}).catch(() => null);
+            mediaBuf = await downloadMediaMessage(quotedFake, 'buffer', {}).catch(() => null);
             mediaType = 'video';
         } else if (quotedFake && quotedMsg?.stickerMessage) {
-            mediaBuf  = await downloadMediaMessage(quotedFake, 'buffer', {}).catch(() => null);
+            mediaBuf = await downloadMediaMessage(quotedFake, 'buffer', {}).catch(() => null);
             mediaType = 'sticker';
         }
 
@@ -1040,21 +1040,21 @@ let text = m.conversation
                 return;
             }
         } else {
-            await sock.sendPresenceUpdate('composing', from).catch(() => {});
+            await sock.sendPresenceUpdate('composing', from).catch(() => { });
         }
 
         if (mediaType === 'image') {
             const sharp = require('sharp');
-            const webp  = await sharp(mediaBuf).webp().toBuffer();
+            const webp = await sharp(mediaBuf).webp().toBuffer();
             await instrumentedSend(from, { sticker: webp });
         } else if (mediaType === 'sticker') {
             // already webp, send directly
             await instrumentedSend(from, { sticker: mediaBuf });
         } else if (mediaType === 'video') {
             const { exec } = require('child_process');
-            const execP    = require('util').promisify(exec);
-            const orig     = path.join(os.tmpdir(), `orig_${Date.now()}.mp4`);
-            const out      = path.join(os.tmpdir(), `stk_${Date.now()}.webp`);
+            const execP = require('util').promisify(exec);
+            const orig = path.join(os.tmpdir(), `orig_${Date.now()}.mp4`);
+            const out = path.join(os.tmpdir(), `stk_${Date.now()}.webp`);
             fs.writeFileSync(orig, mediaBuf);
             try {
                 await execP(`ffmpeg -i "${orig}" -t 6 -vf "fps=10,scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2" -c:v libwebp -quality 70 -loop 0 -an "${out}" -y`);
@@ -1062,7 +1062,7 @@ let text = m.conversation
             } catch (e) {
                 await instrumentedSend(from, { text: "Couldn't convert that video to a sticker." }, { quoted: msg });
             } finally {
-                [orig, out].forEach(p => { try { fs.unlinkSync(p); } catch (_) {} });
+                [orig, out].forEach(p => { try { fs.unlinkSync(p); } catch (_) { } });
             }
         }
         // For text-only prompts, fall through to AI handler for sticker generation
@@ -1091,33 +1091,33 @@ let text = m.conversation
     let typingInterval = null;
     try {
         // Show "typing..." indicator immediately and keep it active
-        await sock.sendPresenceUpdate('composing', from).catch(() => {});
+        await sock.sendPresenceUpdate('composing', from).catch(() => { });
         typingInterval = setInterval(() => {
-            sock.sendPresenceUpdate('composing', from).catch(() => {});
+            sock.sendPresenceUpdate('composing', from).catch(() => { });
         }, 10000); // Refresh every 10s
 
         try {
             const res = await postToAIServer({
-                message:        text || '[media]',
+                message: text || '[media]',
                 quoted_message: quotedText || null,
                 reply_to_quoted: replyToQuoted,
-                image_data:     imageData,
-                image_base64:   imageData,
-                sender:         from,
-                user_phone:     userPhone,
-                push_name:      pushName,
-                group_name:     isGroup ? from : null,
-                bot_id:         botNum,
-                bot_lid:        botLid
+                image_data: imageData,
+                image_base64: imageData,
+                sender: from,
+                user_phone: userPhone,
+                push_name: pushName,
+                group_name: isGroup ? from : null,
+                bot_id: botNum,
+                bot_lid: botLid
             }, { timeout: 90000 });
-            
+
             console.log('[BRIDGE] AI response status:', res.status, 'keys:', Object.keys(res.data || {}));
             await sendAIResponse(msg, from, res, quotedFake, quotedSender);
         } catch (e) {
             console.error('[BRIDGE] AI error:', e.message, e.code || '', e.response?.status || '');
             await sock.sendMessage(outboundJid(from) || from, {
                 text: "I hit a snag getting that answer. Try again in a moment."
-            }).catch(() => {});
+            }).catch(() => { });
         } finally {
             if (typingInterval) clearInterval(typingInterval);
         }
@@ -1159,10 +1159,10 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
         if (!filePath || !fs.existsSync(filePath)) return;
         try {
             const buf = fs.readFileSync(filePath);
-            if      (type === 'audio') await trackedSend(sendJid, { audio: buf, mimetype: 'audio/ogg; codecs=opus', ptt: data.ptt || false });
+            if (type === 'audio') await trackedSend(sendJid, { audio: buf, mimetype: 'audio/ogg; codecs=opus', ptt: data.ptt || false });
             else if (type === 'video') await trackedSend(sendJid, { video: buf, mimetype: 'video/mp4', fileName: filename || 'video.mp4', caption: '🎬' });
             else if (type === 'image') await trackedSend(sendJid, { image: buf, caption: filename || '' });
-            fs.unlink(filePath, () => {});
+            fs.unlink(filePath, () => { });
         } catch (e) { console.error(`[${type}]`, e.message); }
     };
 
@@ -1206,14 +1206,14 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
             const fname = data.file_name || 'document';
             const fmt = (data.file_format || '').toLowerCase();
             const mimeMap = {
-                pdf:  'application/pdf',
+                pdf: 'application/pdf',
                 docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
                 xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             };
             const mime = mimeMap[fmt] || 'application/octet-stream';
             await trackedSend(sendJid, { document: buf, mimetype: mime, fileName: fname, caption: '' });
-            fs.unlink(data.file_path, () => {});
+            fs.unlink(data.file_path, () => { });
             console.log(`[DocCreate] Sent ${fname} to ${sendJid.split('@')[0]}`);
         } catch (e) {
             console.error('[DocCreate] send error:', e.message);
@@ -1226,14 +1226,14 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
                 const fname = docEntry.filename || 'document';
                 const fmt = (docEntry.format || '').toLowerCase();
                 const mimeMap = {
-                    pdf:  'application/pdf',
+                    pdf: 'application/pdf',
                     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                     pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
                     xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 };
                 const mime = mimeMap[fmt] || 'application/octet-stream';
                 await trackedSend(sendJid, { document: buf, mimetype: mime, fileName: fname, caption: '' });
-                fs.unlink(docEntry.path, () => {});
+                fs.unlink(docEntry.path, () => { });
                 console.log(`[DocCreate] Sent ${fname} to ${sendJid.split('@')[0]}`);
             } catch (e) {
                 console.error('[DocCreate] send error:', e.message);
@@ -1259,7 +1259,7 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
             await trackedSend(sendJid, { sticker: buf }, { quoted: quotedObj });
         } catch (e) { console.error('[Sticker send]', e.message); }
 
-    // Send text reply (or in-place edit of a previous bot message)
+        // Send text reply (or in-place edit of a previous bot message)
     } else if (data.reply || (data.edit_mode && data.replace_message_id)) {
 
         if (data.edit_mode && data.replace_message_id) {
@@ -1424,7 +1424,7 @@ http.createServer((req, res) => {
                                 }
                             }
                         }
-                        fs.unlink(safePath, () => {});
+                        fs.unlink(safePath, () => { });
                     } else {
                         const r = await instrumentedSend(target, { text });
                         sent_key = r && r.key;
@@ -1435,7 +1435,7 @@ http.createServer((req, res) => {
                     return res.end(JSON.stringify({ ok: false, error: err.message }));
                 }
                 // Best-effort typing indicator refresh
-                sock.sendPresenceUpdate('composing', target).catch(() => {});
+                sock.sendPresenceUpdate('composing', target).catch(() => { });
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 return res.end(JSON.stringify({
                     ok: true,
@@ -1558,7 +1558,7 @@ http.createServer((req, res) => {
         req.on('data', chunk => body += chunk.toString());
         req.on('end', async () => {
             try {
-                const { jid, message_id } = JSON.parse(body);
+                const { jid, message_id, from_me, participant } = JSON.parse(body);
                 if (!sock) {
                     res.writeHead(503, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
@@ -1567,15 +1567,18 @@ http.createServer((req, res) => {
                     res.writeHead(400, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify({ ok: false, error: 'missing_fields' }));
                 }
-                // Use the raw jid as-is: the message was sent to this exact jid
-                // (e.g. @lid), and delete keys must match the original send key.
-                // normalizeJid() would remap @lid → @s.whatsapp.net and the
-                // delete would silently fail.
                 const target = jid;
+                const isFromMe = from_me !== undefined ? Boolean(from_me) : true;
+                const delKey = {
+                    remoteJid: target,
+                    id: message_id,
+                    fromMe: isFromMe,
+                };
+                if (participant && !isFromMe) {
+                    delKey.participant = participant;
+                }
                 try {
-                    await instrumentedSend(target, {
-                        delete: { remoteJid: target, id: message_id, fromMe: true },
-                    });
+                    await instrumentedSend(target, { delete: delKey });
                 } catch (err) {
                     console.error('[API] deleteMessage error:', err.message);
                     res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -1585,6 +1588,176 @@ http.createServer((req, res) => {
                 res.end(JSON.stringify({ ok: true, message_id }));
             } catch (e) {
                 console.error('[API] /delete_message error:', e.message);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: e.message }));
+            }
+        });
+        return;
+    }
+
+    if (req.method === 'POST' && req.url === '/pin_message') {
+        let body = '';
+        req.on('data', chunk => body += chunk.toString());
+        req.on('end', async () => {
+            try {
+                const { jid, message_id, pin, from_me, participant, duration_sec } = JSON.parse(body);
+                if (!sock) {
+                    res.writeHead(503, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
+                }
+                if (!jid || !message_id) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'missing_fields' }));
+                }
+                const target = jid;
+                const isPin = pin !== undefined ? Boolean(pin) : true;
+                const isFromMe = from_me !== undefined ? Boolean(from_me) : true;
+                const msgKey = { remoteJid: target, id: message_id, fromMe: isFromMe };
+                if (participant && !isFromMe) msgKey.participant = participant;
+
+                try {
+                    // Type 1 = pin, Type 2 = unpin in Baileys protocol
+                    const pinMsg = {
+                        pin: {
+                            type: isPin ? 1 : 2,
+                            key: msgKey,
+                            time: duration_sec || 2592000,
+                        }
+                    };
+                    await instrumentedSend(target, pinMsg);
+                } catch (err) {
+                    console.error('[API] pinMessage error:', err.message);
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: err.message }));
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: true, message_id, pinned: isPin }));
+            } catch (e) {
+                console.error('[API] /pin_message error:', e.message);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: e.message }));
+            }
+        });
+        return;
+    }
+
+    if (req.method === 'POST' && req.url === '/forward_message') {
+        let body = '';
+        req.on('data', chunk => body += chunk.toString());
+        req.on('end', async () => {
+            try {
+                const { target_jid, message_id, from_jid, from_me, participant } = JSON.parse(body);
+                if (!sock) {
+                    res.writeHead(503, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
+                }
+                if (!target_jid || !message_id || !from_jid) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'missing_fields' }));
+                }
+                const isFromMe = from_me !== undefined ? Boolean(from_me) : false;
+                const key = { remoteJid: from_jid, id: message_id, fromMe: isFromMe };
+                if (participant && !isFromMe) key.participant = participant;
+
+                try {
+                    await instrumentedSend(target_jid, { forward: { key } });
+                } catch (err) {
+                    console.error('[API] forwardMessage error:', err.message);
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: err.message }));
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: true, target_jid, message_id }));
+            } catch (e) {
+                console.error('[API] /forward_message error:', e.message);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, error: e.message }));
+            }
+        });
+        return;
+    }
+
+    if (req.method === 'GET' && req.url === '/list_groups' || req.method === 'POST' && req.url === '/list_groups') {
+        try {
+            if (!sock) {
+                res.writeHead(503, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
+            }
+            const groupsDict = await sock.groupFetchAllParticipating();
+            const botNum = sock.user?.id ? sock.user.id.split(':')[0].split('@')[0] : '';
+            const botLid = sock.user?.lid ? sock.user.lid.split(':')[0].split('@')[0] : '';
+
+            const result = [];
+            for (const [jid, meta] of Object.entries(groupsDict)) {
+                const participants = meta.participants || [];
+                const botParticipant = participants.find(p => {
+                    const pid = (p.id || p.jid || '').split('@')[0].split(':')[0];
+                    return pid === botNum || pid === botLid;
+                });
+                const isBotAdmin = !!(botParticipant && (botParticipant.admin === 'admin' || botParticipant.admin === 'superadmin' || botParticipant.admin === true));
+                const adminJids = participants.filter(p => p.admin).map(p => p.id || p.jid);
+
+                result.append ? null : result.push({
+                    jid: jid,
+                    subject: meta.subject || '',
+                    owner: meta.owner || meta.subjectOwner || '',
+                    participant_count: participants.length,
+                    is_bot_admin: isBotAdmin,
+                    admin_jids: adminJids,
+                    announce: !!meta.announce,
+                    linked_parent: meta.linkedParent || null,
+                    restrict: !!meta.restrict,
+                });
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: true, count: result.length, groups: result }));
+        } catch (e) {
+            console.error('[API] /list_groups error:', e.message);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ ok: false, error: e.message }));
+        }
+    }
+
+    if (req.method === 'POST' && req.url === '/group_setting') {
+        let body = '';
+        req.on('data', chunk => body += chunk.toString());
+        req.on('end', async () => {
+            try {
+                const { jid, jids, setting } = JSON.parse(body);
+                if (!sock) {
+                    res.writeHead(503, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
+                }
+                const targetJids = jids || (jid ? [jid] : []);
+                if (!targetJids.length || !setting) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'missing_jid_or_setting' }));
+                }
+
+                // setting: 'announcement' (lock sending) | 'not_announcement' (unlock sending) | 'locked' (lock edit info) | 'unlocked' (unlock edit info)
+                const validSettings = ['announcement', 'not_announcement', 'locked', 'unlocked'];
+                let baileysSetting = setting;
+                if (setting === 'lock' || setting === 'lock_messages') baileysSetting = 'announcement';
+                if (setting === 'unlock' || setting === 'unlock_messages') baileysSetting = 'not_announcement';
+
+                if (!validSettings.includes(baileysSetting)) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: `invalid_setting: ${setting}` }));
+                }
+
+                const results = {};
+                for (const gJid of targetJids) {
+                    try {
+                        await sock.groupSettingUpdate(gJid, baileysSetting);
+                        results[gJid] = { ok: true };
+                    } catch (err) {
+                        results[gJid] = { ok: false, error: err.message };
+                    }
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: true, setting: baileysSetting, results }));
+            } catch (e) {
+                console.error('[API] /group_setting error:', e.message);
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ ok: false, error: e.message }));
             }
@@ -1653,10 +1826,10 @@ http.createServer((req, res) => {
         });
         return;
     }
-    
+
     // Default healthcheck
     if (req.url === '/health/full') {
-        const botId  = sock?.user?.id || '';
+        const botId = sock?.user?.id || '';
         const botNum = botId.split(':')[0].split('@')[0] || null;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({

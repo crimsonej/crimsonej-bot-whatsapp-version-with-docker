@@ -120,10 +120,12 @@ def detect_violation(message: str) -> list[ViolationType]:
     """Detect boundary violations in message."""
     violations = []
     msg_lower = message.lower()
+    doxxing_text = re.sub(r"@\d{10,}(?:@[a-z0-9._-]+)?", "", msg_lower)
     
     for vtype, patterns in VIOLATION_PATTERNS.items():
+        text = doxxing_text if vtype == ViolationType.DOXXING else msg_lower
         for pattern in patterns:
-            if re.search(pattern, msg_lower, re.IGNORECASE):
+            if re.search(pattern, text, re.IGNORECASE):
                 violations.append(vtype)
                 break
     

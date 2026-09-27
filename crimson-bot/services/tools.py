@@ -11,10 +11,36 @@ import json
 import os
 import re
 
-from core.config import log
+from core.config import log, cfg
 from core.eventlog import event_log
 from services.tasks import task_store
 from realtime_search import search_web, needs_realtime_heuristic
+from services.environment import get_optimized_params, is_constrained
+from services.contact_relay import RELAY_REQUEST_TOOL, execute_relay_request
+from services.escalation import MIXUP_ESCALATE_TOOL, execute_mixup_escalate
+from services.dynamic_tools import (
+    CREATE_TOOL_SCHEMA, LIST_DYNAMIC_TOOLS_SCHEMA, REMOVE_DYNAMIC_TOOL_SCHEMA,
+    SELF_REPAIR_SCHEMA,
+    create_dynamic_tool, execute_list_dynamic_tools, execute_remove_dynamic_tool, execute_self_repair,
+    bootstrap_dynamic_tools
+)
+
+
+def _vision_failed(text: str | None) -> bool:
+    """Check if vision service returned a failure marker."""
+    if not text:
+        return True
+    lowered = text.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "not configured",
+            "could not analyze",
+            "no description returned",
+            "vision service unavailable",
+        )
+    )
+
 
 WEB_SEARCH_TOOL = {
     "type": "function",
@@ -879,6 +905,170 @@ SEARCH_GITHUB_TOOL = {
     }
 }
 
+GITHUB_CREATE_FILE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "github_create_file",
+        "description": "Create a new file in a GitHub repository. Requires GITHUB_TOKEN with repo scope in environment.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in format 'owner/repo' (e.g., 'crimsonej/crimsonej-bot-whatsapp-version-with-docker')"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "File path in the repository (e.g., 'memories/user_facts.json')"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "File content to write"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Commit message"
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Branch name (default: main)",
+                    "default": "main"
+                }
+            },
+            "required": ["repo", "path", "content", "message"]
+        }
+    }
+}
+
+GITHUB_UPDATE_FILE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "github_update_file",
+        "description": "Update an existing file in a GitHub repository. Requires GITHUB_TOKEN with repo scope.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in format 'owner/repo'"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "File path in the repository"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "New file content"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Commit message"
+                },
+                "sha": {
+                    "type": "string",
+                    "description": "Current file SHA (from github_get_file)"
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Branch name (default: main)",
+                    "default": "main"
+                }
+            },
+            "required": ["repo", "path", "content", "message", "sha"]
+        }
+    }
+}
+
+GITHUB_GET_FILE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "github_get_file",
+        "description": "Get file content and SHA from a GitHub repository.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in format 'owner/repo'"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "File path in the repository"
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Branch name (default: main)",
+                    "default": "main"
+                }
+            },
+            "required": ["repo", "path"]
+        }
+    }
+}
+
+GITHUB_UPSERT_FILE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "github_upsert_file",
+        "description": "Create or update a file in GitHub (smart upsert - checks if exists first). Best for persistent storage.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in format 'owner/repo'"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "File path in the repository"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "File content to write"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Commit message"
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Branch name (default: main)",
+                    "default": "main"
+                }
+            },
+            "required": ["repo", "path", "content", "message"]
+        }
+    }
+}
+
+GITHUB_LIST_FILES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "github_list_files",
+        "description": "List files in a GitHub repository directory.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in format 'owner/repo'"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Directory path (empty for root)",
+                    "default": ""
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Branch name (default: main)",
+                    "default": "main"
+                }
+            },
+            "required": ["repo"]
+        }
+    }
+}
+
 SUBSCRIBE_NEWS_FEED_TOOL = {
     "type": "function",
     "function": {
@@ -928,6 +1118,279 @@ DEEP_RESEARCH_TOOL = {
     }
 }
 
+BRIDGE_DELETE_MESSAGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_delete_message",
+        "description": "Delete a message from WhatsApp chat/group for everyone. Use when user says 'delete that message', 'remove message X', or auto-moderating.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "jid": {"type": "string", "description": "Chat or group JID where message exists"},
+                "message_id": {"type": "string", "description": "WhatsApp message ID to delete"}
+            },
+            "required": ["jid", "message_id"]
+        }
+    }
+}
+
+BRIDGE_FORWARD_MESSAGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_forward_message",
+        "description": "Forward a message from one chat/group to another user or group. Use when user says 'forward this to X', 'send this message to john'.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "jid": {"type": "string", "description": "Source chat/group JID"},
+                "message_id": {"type": "string", "description": "WhatsApp message ID to forward"},
+                "target_jid": {"type": "string", "description": "Destination contact or group JID"}
+            },
+            "required": ["jid", "message_id", "target_jid"]
+        }
+    }
+}
+
+BRIDGE_PIN_MESSAGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_pin_message",
+        "description": "Pin a message in a WhatsApp chat or group. Use when user says 'pin this message', 'pin msg X'.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "jid": {"type": "string", "description": "Chat or group JID"},
+                "message_id": {"type": "string", "description": "WhatsApp message ID to pin"}
+            },
+            "required": ["jid", "message_id"]
+        }
+    }
+}
+
+BRIDGE_UNPIN_MESSAGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_unpin_message",
+        "description": "Unpin the pinned message in a WhatsApp chat or group.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "jid": {"type": "string", "description": "Chat or group JID"}
+            },
+            "required": ["jid"]
+        }
+    }
+}
+
+BRIDGE_GET_USER_GROUPS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_get_user_groups",
+        "description": "Get all WhatsApp groups the bot is currently a member or admin in, including participant counts and admin status. Use when user asks 'how many groups are you in', 'list your groups', 'how many groups are you admin in'.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    }
+}
+
+BRIDGE_GET_GROUP_PARTICIPANTS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_get_group_participants",
+        "description": "Get list of members/participants in a WhatsApp group.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "group_jid": {"type": "string", "description": "Group JID"}
+            },
+            "required": ["group_jid"]
+        }
+    }
+}
+
+BRIDGE_SET_GROUP_SETTINGS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_set_group_settings",
+        "description": "Change WhatsApp group settings like announcement mode (only admins can send messages) or edit group info permissions.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "group_jid": {"type": "string", "description": "Group JID"},
+                "settings": {"type": "object", "description": "Settings key-values e.g. {'announcement': True}"}
+            },
+            "required": ["group_jid", "settings"]
+        }
+    }
+}
+
+BRIDGE_LOCK_GROUP_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_lock_group",
+        "description": "Lock a WhatsApp group so only admins can send messages. Can specify a duration in seconds (e.g. 3600 for 1 hour). Use when user says 'lock group X for 1 hr', 'lock all groups except 1 and 3'.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "group_jid": {"type": "string", "description": "Group JID"},
+                "duration_seconds": {"type": "integer", "description": "Duration in seconds to lock. 0 for indefinite lock. Default 3600 (1hr).", "default": 3600}
+            },
+            "required": ["group_jid"]
+        }
+    }
+}
+
+BRIDGE_UNLOCK_GROUP_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_unlock_group",
+        "description": "Unlock a WhatsApp group so all members can send messages again.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "group_jid": {"type": "string", "description": "Group JID"}
+            },
+            "required": ["group_jid"]
+        }
+    }
+}
+
+BRIDGE_SEND_DOCUMENT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_send_document",
+        "description": "Send an existing document file (.pdf, .docx, .xlsx, .pptx, etc.) as a WhatsApp attachment.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "jid": {"type": "string", "description": "Recipient JID or group JID"},
+                "document_path": {"type": "string", "description": "Local absolute path to document file"},
+                "caption": {"type": "string", "description": "Optional caption message"},
+                "filename": {"type": "string", "description": "Optional display filename"}
+            },
+            "required": ["jid", "document_path"]
+        }
+    }
+}
+
+BRIDGE_GET_MESSAGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_get_message",
+        "description": "Fetch details of a specific message by its ID.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "jid": {"type": "string", "description": "Chat JID"},
+                "message_id": {"type": "string", "description": "Message ID"}
+            },
+            "required": ["jid", "message_id"]
+        }
+    }
+}
+
+BRIDGE_SEARCH_MESSAGES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_search_messages",
+        "description": "Search chat history for specific keywords or messages.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query text"},
+                "jid": {"type": "string", "description": "Optional chat JID filter"}
+            },
+            "required": ["query"]
+        }
+    }
+}
+
+BRIDGE_DOWNLOAD_MEDIA_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_download_media",
+        "description": "Download media attachment from a message by message ID.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message_id": {"type": "string", "description": "Message ID with media"}
+            },
+            "required": ["message_id"]
+        }
+    }
+}
+
+BRIDGE_SET_GROUP_RULES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_set_group_rules",
+        "description": "Set content moderation rules (no stickers, no links) or silent mode for a WhatsApp group.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "group_jid": {"type": "string", "description": "Group JID or group identifier"},
+                "no_stickers": {"type": "boolean", "description": "Silently delete stickers when sent"},
+                "no_links": {"type": "boolean", "description": "Silently delete links when sent"},
+                "silent_mode": {"type": "boolean", "description": "Do not respond to any messages in this group"}
+            },
+            "required": ["group_jid"]
+        }
+    }
+}
+
+CONVERT_DOCUMENT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "convert_document",
+        "description": "Convert document files between PDF, DOCX, TXT, and Image formats (e.g. Doc to PDF, PDF to Doc, Image to PDF, Text to PDF).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Path to input document or image file."},
+                "target_format": {"type": "string", "enum": ["pdf", "docx", "txt"], "description": "Desired output format."}
+            },
+            "required": ["file_path", "target_format"]
+        }
+    }
+}
+
+EDIT_DOCUMENT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "edit_document",
+        "description": "Edit or modify a Word (.docx) document with text replacements or paragraph additions.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Path to input .docx file."},
+                "replacements": {"type": "object", "description": "Search and replace pairs."},
+                "additions": {"type": "array", "items": {"type": "string"}, "description": "New paragraphs to append."}
+            },
+            "required": ["file_path"]
+        }
+    }
+}
+
+SCHEDULE_CONDITIONAL_WORKFLOW_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "schedule_conditional_workflow",
+        "description": "Schedule a multi-step conditional task (e.g. ask Contact A at 4pm for a PDF, and deliver it to User B at 5pm).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "contact": {"type": "string", "description": "Target contact name or phone."},
+                "initial_message": {"type": "string", "description": "Message to send target contact."},
+                "initial_time": {"type": "string", "description": "Time to send initial message (e.g. 16:00 or 4pm)."},
+                "deliver_to": {"type": "string", "description": "Who to deliver captured file to."},
+                "delivery_time": {"type": "string", "description": "Time to deliver captured file (e.g. 17:00 or 5pm)."}
+            },
+            "required": ["contact", "initial_message", "initial_time"]
+        }
+    }
+}
+
 ALL_TOOLS = [
     WEB_SEARCH_TOOL,
     ANALYZE_IMAGE_TOOL,
@@ -968,8 +1431,32 @@ ALL_TOOLS = [
     GET_YOUTUBE_TRANSCRIPT_TOOL,
     SEARCH_REDDIT_TOOL,
     SEARCH_GITHUB_TOOL,
+    GITHUB_CREATE_FILE_TOOL,
+    GITHUB_UPDATE_FILE_TOOL,
+    GITHUB_GET_FILE_TOOL,
+    GITHUB_UPSERT_FILE_TOOL,
+    GITHUB_LIST_FILES_TOOL,
     SUBSCRIBE_NEWS_FEED_TOOL,
     DEEP_RESEARCH_TOOL,
+    RELAY_REQUEST_TOOL,
+    MIXUP_ESCALATE_TOOL,
+    BRIDGE_DELETE_MESSAGE_TOOL,
+    BRIDGE_FORWARD_MESSAGE_TOOL,
+    BRIDGE_PIN_MESSAGE_TOOL,
+    BRIDGE_UNPIN_MESSAGE_TOOL,
+    BRIDGE_GET_USER_GROUPS_TOOL,
+    BRIDGE_GET_GROUP_PARTICIPANTS_TOOL,
+    BRIDGE_SET_GROUP_SETTINGS_TOOL,
+    BRIDGE_LOCK_GROUP_TOOL,
+    BRIDGE_UNLOCK_GROUP_TOOL,
+    BRIDGE_SEND_DOCUMENT_TOOL,
+    BRIDGE_GET_MESSAGE_TOOL,
+    BRIDGE_SEARCH_MESSAGES_TOOL,
+    BRIDGE_DOWNLOAD_MEDIA_TOOL,
+    BRIDGE_SET_GROUP_RULES_TOOL,
+    CONVERT_DOCUMENT_TOOL,
+    EDIT_DOCUMENT_TOOL,
+    SCHEDULE_CONDITIONAL_WORKFLOW_TOOL,
 ]
 
 def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_service=None, vision_service=None) -> dict:
@@ -1011,6 +1498,15 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
         log.info("[Tool Call] Executing %s with args %s", name, args)
 
         if name == "web_search":
+            # Get optimized params for current environment
+            opt_params = get_optimized_params("web_search", {"query": args.get("query", "")})
+            
+            # If offline mode, use cached/local knowledge
+            if opt_params.get("offline_mode"):
+                natural = opt_params.get("message", "Searching my memory... (offline)")
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+                continue
+            
             query = args.get("query", "")
             tried = []
             search_result = None
@@ -1028,11 +1524,9 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
                 log.warning("[Search] failed for %r: %s", query, exc)
                 search_result = {"ok": False, "error": str(exc), "results": []}
 
-            search_result["instruction"] = (
-                "Synthesize these live search results into your response directly and seamlessly. "
-                "Do NOT say 'I will search for you' or promise to send results later because you are completing the answer right now."
-            )
-            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(search_result)})
+            # Return natural language summary instead of raw JSON
+            natural_summary = _format_search_natural(query, search_result)
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural_summary})
 
             if _looks_like_media_search(query):
                 search_reply = _format_search_suggestions(query, search_result, tried)
@@ -1046,29 +1540,85 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
                 description = vision_service.analyze_image_with_nvidia(image_base64, prompt)
             else:
                 description = "Vision service unavailable."
-            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": description or "Failed."})
+            # Natural language result
+            if description and not _vision_failed(description):
+                natural = f"Looking at that image: {description}"
+            else:
+                natural = "Couldn't make out the image clearly."
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
 
         elif name == "generate_image":
+            # Get optimized params for current environment
+            opt_params = get_optimized_params("image_generation", {"prompt": args.get("prompt", "")})
+            
+            # If offline mode
+            if opt_params.get("offline_mode"):
+                natural = opt_params.get("message", "Image gen needs internet.")
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+                continue
+            
             prompt = args.get("prompt", "")
             enriched_prompt = _enrich_image_prompt(prompt)
+            
+            # Apply optimizations to generation params
+            if opt_params.get("use_external_api"):
+                # Force external API usage
+                pass
+            if "resolution" in opt_params:
+                # Modify prompt to include resolution hint
+                enriched_prompt += f" --resolution {opt_params['resolution']}"
+            if "steps" in opt_params:
+                enriched_prompt += f" --steps {opt_params['steps']}"
+            if opt_params.get("format"):
+                enriched_prompt += f" --format {opt_params['format']}"
+            
             if vision_service:
                 img_path = vision_service.generate_image_auto(enriched_prompt)
                 if img_path:
                     tool_results["image_list"].append(img_path)
-                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Success"})
+                    # Cleanup if requested
+                    if opt_params.get("cleanup_after_send"):
+                        # Note: actual cleanup happens in vision_service
+                        pass
+                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Done — image generated."})
                     continue
-            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Failed"})
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Image generation didn't work this time."})
 
         elif name == "generate_sticker":
+            # Get optimized params for current environment
+            opt_params = get_optimized_params("image_generation", {"prompt": args.get("prompt", "")})
+            
+            # If offline mode
+            if opt_params.get("offline_mode"):
+                natural = opt_params.get("message", "Sticker gen needs internet.")
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+                continue
+            
+            prompt = args.get("prompt", "")
+            enriched_prompt = _enrich_image_prompt(prompt)
+            
+            # Apply optimizations
+            if "resolution" in opt_params:
+                enriched_prompt += f" --resolution {opt_params['resolution']}"
+            if opt_params.get("format"):
+                enriched_prompt += f" --format {opt_params['format']}"
+            
+            if vision_service:
+                sticker_b64 = vision_service.generate_sticker_auto(enriched_prompt)
+                if sticker_b64:
+                    tool_results["sticker_list"].append(sticker_b64)
+                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Done — sticker generated."})
+                    continue
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Sticker generation didn't work this time."})
             prompt = args.get("prompt", "")
             enriched_prompt = _enrich_image_prompt(prompt)
             if vision_service:
                 sticker_b64 = vision_service.generate_sticker_auto(enriched_prompt)
                 if sticker_b64:
                     tool_results["sticker_list"].append(sticker_b64)
-                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Success"})
+                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Done — sticker generated."})
                     continue
-            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Failed"})
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Sticker generation didn't work this time."})
 
         elif name == "smart_sticker_response":
             sticker_base64 = args.get("sticker_base64", "")
@@ -1090,15 +1640,28 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
                 sticker_b64 = vision_service.generate_sticker_auto(enriched_prompt)
                 if sticker_b64:
                     tool_results["sticker_list"].append(sticker_b64)
-                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Success"})
+                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Done — response sticker generated."})
                     continue
-            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Failed"})
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": "Couldn't generate a response sticker."})
 
         elif name in ("download_audio", "download_youtube"):
+            # Get optimized params for current environment
+            opt_params = get_optimized_params("media_download", {
+                "query": args.get("query") or args.get("url") or "",
+                "media_type": "audio"
+            })
+            
+            # If offline mode
+            if opt_params.get("offline_mode"):
+                natural = opt_params.get("message", "Can't download right now — no internet.")
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+                continue
+            
             query = args.get("query") or args.get("url") or ""
+            # Pass optimization params to download task
             menu_reply = _enqueue_download_task(
                 name, query, "audio", user_id, sender_jid,
-                media_service, messages, tool_call
+                media_service, messages, tool_call, opt_params
             )
             if menu_reply is not None:
                 if menu_reply.startswith("{"):
@@ -1117,10 +1680,23 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
                 continue
 
         elif name in ("download_video", "download_tiktok"):
+            # Get optimized params for current environment
+            opt_params = get_optimized_params("media_download", {
+                "query": args.get("query") or args.get("url") or "",
+                "media_type": "video"
+            })
+            
+            # If offline mode
+            if opt_params.get("offline_mode"):
+                natural = opt_params.get("message", "Can't download right now — no internet.")
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+                continue
+            
             query = args.get("query") or args.get("url") or ""
+            # Pass optimization params to download task
             menu_reply = _enqueue_download_task(
                 name, query, "video", user_id, sender_jid,
-                media_service, messages, tool_call
+                media_service, messages, tool_call, opt_params
             )
             if menu_reply is not None:
                 if menu_reply.startswith("{"):
@@ -1684,7 +2260,146 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
             from services.github_search import search_github as gh_srch
             query = args.get("query", "")
             res = gh_srch(query)
-            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(res)})
+            # Natural language result
+            if res.get("ok") and res.get("results"):
+                lines = [f"- {r['name']}: {r['description'][:100]} (⭐{r['stars']})" for r in res["results"][:3]]
+                natural = f"Found {len(res['results'])} repos for '{query}':\n" + "\n".join(lines)
+            else:
+                natural = f"No repos found for '{query}'."
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "github_create_file":
+            if not is_feature_enabled("github_sync"):
+                reason = get_degradation_reason("github_sync") or "disabled"
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": f"GitHub sync is currently unavailable ({reason})."})
+                continue
+            from services.github_search import github_create_file
+            repo = args.get("repo", "")
+            path = args.get("path", "")
+            content = args.get("content", "")
+            message = args.get("message", "")
+            branch = args.get("branch", "main")
+            res = github_create_file(repo, path, content, message, branch)
+            if res.get("ok"):
+                natural = f"Created {path} in {repo} ✅"
+            else:
+                natural = f"Failed to create file: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "github_update_file":
+            # Get optimized params for current environment
+            opt_params = get_optimized_params("github_sync", args)
+            
+            # If offline mode - queue for later
+            if opt_params.get("offline_mode") or opt_params.get("queue_for_later"):
+                natural = opt_params.get("message", "GitHub sync queued — will run when online.")
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+                continue
+            
+            from services.github_search import github_update_file
+            repo = args.get("repo", "")
+            path = args.get("path", "")
+            content = args.get("content", "")
+            message = args.get("message", "")
+            sha = args.get("sha", "")
+            branch = args.get("branch", "main")
+            
+            # Apply low disk optimizations
+            if opt_params.get("compress"):
+                # Content is already compressed in transit
+                pass
+            if opt_params.get("skip_vectors") and "vectors" in path:
+                natural = "Skipping vector sync (low disk)."
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+                continue
+            
+            res = github_update_file(repo, path, content, message, sha, branch)
+            if res.get("ok"):
+                natural = f"Updated {path} in {repo} ✅"
+            else:
+                natural = f"Failed to update file: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "github_get_file":
+            # Get optimized params for current environment
+            opt_params = get_optimized_params("github_sync", args)
+            
+            # If offline mode - queue for later
+            if opt_params.get("offline_mode") or opt_params.get("queue_for_later"):
+                natural = opt_params.get("message", "GitHub sync queued — will run when online.")
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+                continue
+            
+            from services.github_search import github_get_file
+            repo = args.get("repo", "")
+            path = args.get("path", "")
+            branch = args.get("branch", "main")
+            res = github_get_file(repo, path, branch)
+            if res.get("ok"):
+                content_preview = res.get("content", "")[:200]
+                natural = f"File {path} in {repo}:\n{content_preview}{'...' if len(res.get('content', '')) > 200 else ''}"
+            else:
+                natural = f"Failed to get file: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "github_upsert_file":
+            # Get optimized params for current environment
+            opt_params = get_optimized_params("github_sync", args)
+            
+            # If offline mode - queue for later
+            if opt_params.get("offline_mode") or opt_params.get("queue_for_later"):
+                natural = opt_params.get("message", "GitHub sync queued — will run when online.")
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+                continue
+            
+            from services.github_search import github_upsert_file
+            repo = args.get("repo", "")
+            path = args.get("path", "")
+            content = args.get("content", "")
+            message = args.get("message", "")
+            branch = args.get("branch", "main")
+            
+            # Apply low disk optimizations
+            if opt_params.get("compress"):
+                pass
+            if opt_params.get("skip_vectors") and "vectors" in path:
+                natural = "Skipping vector sync (low disk)."
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+                continue
+            
+            res = github_upsert_file(repo, path, content, message, branch)
+            if res.get("ok"):
+                action = "Created" if "Created" in str(res.get("commit", {}).get("message", "")) else "Updated"
+                natural = f"{action} {path} in {repo} ✅"
+            else:
+                natural = f"Failed to upsert file: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "github_list_files":
+            # Get optimized params for current environment
+            opt_params = get_optimized_params("github_sync", args)
+            
+            # If offline mode - queue for later
+            if opt_params.get("offline_mode") or opt_params.get("queue_for_later"):
+                natural = opt_params.get("message", "GitHub sync queued — will run when online.")
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+                continue
+            
+            from services.github_search import github_list_files
+            repo = args.get("repo", "")
+            path = args.get("path", "")
+            branch = args.get("branch", "main")
+            res = github_list_files(repo, path, branch)
+            if res.get("ok"):
+                files = res.get("files", [])
+                if files:
+                    lines = [f"- {f['name']} ({f['type']}, {f.get('size', 0)} bytes)" for f in files[:10]]
+                    natural = f"Files in {repo}/{path or 'root'}:\n" + "\n".join(lines)
+                else:
+                    natural = f"No files in {repo}/{path or 'root'}"
+            else:
+                natural = f"Failed to list files: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
 
         elif name == "subscribe_news_feed":
             from services.rss_watchdog import fetch_rss_feed
@@ -1712,6 +2427,87 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
             messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
                              "content": json.dumps(result)})
             return {**tool_results, "reply": result["reply"]}
+
+        elif name == "request_creator_contact":
+            message = args.get("message", "")
+            result = execute_relay_request(user_id, sender_jid or "", message)
+            if result.get("ok"):
+                natural = f"Sent it to my dad. He'll hit you back when he can 🤙"
+            else:
+                natural = f"Couldn't send it: {result.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+            return {**tool_results, "reply": natural}
+
+        elif name == "escalate_name_mixup":
+            wrong_name = args.get("wrong_name", "")
+            user_message = args.get("user_message", "")
+            
+            # Get bot's last response from messages
+            bot_response = ""
+            if messages:
+                bot_msgs = [m for m in messages if m.get("role") == "assistant"]
+                if bot_msgs:
+                    bot_response = bot_msgs[-1].get("content", "")
+            
+            result = execute_mixup_escalate(user_id, sender_jid or "", wrong_name, user_message, bot_response)
+            if result.get("ok"):
+                natural = f"Quietly pinged dad about the name mix-up."
+            else:
+                natural = f"Couldn't ping dad: {result.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+            return {**tool_results, "reply": natural}
+
+        elif name == "create_dynamic_tool":
+            name_arg = args.get("name", "")
+            description = args.get("description", "")
+            parameters_schema = args.get("parameters_schema", {})
+            python_code = args.get("python_code", "")
+            metadata = args.get("metadata", {})
+            
+            result = create_dynamic_tool(name_arg, description, parameters_schema, python_code, metadata)
+            if result.get("ok"):
+                natural = f"Created tool {result['name']}. It's ready to use."
+            else:
+                natural = f"Failed to create tool: {result.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+            return {**tool_results, "reply": natural}
+
+        elif name == "list_dynamic_tools":
+            result = execute_list_dynamic_tools()
+            if result.get("ok"):
+                tools = result.get("tools", [])
+                if tools:
+                    lines = [f"• {t['name']}: {t.get('description', 'No description')} (category: {t.get('category', 'general')})" for t in tools]
+                    natural = f"Dynamic tools ({result['count']}):\n" + "\n".join(lines)
+                else:
+                    natural = "No dynamic tools yet."
+            else:
+                natural = "Couldn't list dynamic tools."
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+            return {**tool_results, "reply": natural}
+
+        elif name == "remove_dynamic_tool":
+            name_arg = args.get("name", "")
+            result = execute_remove_dynamic_tool(name_arg)
+            if result.get("ok"):
+                natural = f"Removed {name_arg}."
+            else:
+                natural = f"Couldn't remove: {result.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+            return {**tool_results, "reply": natural}
+
+        elif name == "self_repair":
+            issue = args.get("issue_description", "")
+            target = args.get("target", "unknown")
+            create_tool = args.get("create_fix_tool", False)
+            
+            result = execute_self_repair(issue, target, create_tool)
+            if result.get("ok"):
+                natural = f"Self-repair request sent to dad. He'll guide the fix."
+            else:
+                natural = f"Couldn't request repair: {result.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+            return {**tool_results, "reply": natural}
 
         elif name == "parse_document":
             # Accept both the tool schema names and the bridge's field names
@@ -1764,8 +2560,260 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
                 else:
                     messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": result or "Failed."})
 
-    return tool_results
+        # Bridge tools - Message operations
+        elif name == "bridge_delete_message":
+            jid = args.get("jid", "")
+            message_id = args.get("message_id", "")
+            from services.bridge_api import bridge_delete_message
+            res = bridge_delete_message(jid, message_id)
+            if res.get("ok"):
+                natural = "Message deleted ✅"
+            else:
+                natural = f"Failed to delete: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
 
+        elif name == "bridge_forward_message":
+            jid = args.get("jid", "")
+            message_id = args.get("message_id", "")
+            target_jid = args.get("target_jid", "")
+            from services.bridge_api import bridge_forward_message
+            res = bridge_forward_message(jid, message_id, target_jid)
+            if res.get("ok"):
+                natural = f"Forwarded to {target_jid} ✅"
+            else:
+                natural = f"Failed to forward: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_pin_message":
+            jid = args.get("jid", "")
+            message_id = args.get("message_id", "")
+            from services.bridge_api import bridge_pin_message
+            res = bridge_pin_message(jid, message_id)
+            if res.get("ok"):
+                natural = "Pinned ✅"
+            else:
+                natural = f"Failed to pin: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_unpin_message":
+            jid = args.get("jid", "")
+            from services.bridge_api import bridge_unpin_message
+            res = bridge_unpin_message(jid)
+            if res.get("ok"):
+                natural = "Unpinned ✅"
+            else:
+                natural = f"Failed to unpin: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_get_user_groups":
+            from services.bridge_api import bridge_get_user_groups
+            res = bridge_get_user_groups()
+            if res.get("ok"):
+                groups = res.get("groups", [])
+                if groups:
+                    lines = [f"• {g['name']} ({'admin' if g.get('is_admin') else 'member'}) — {g.get('participant_count', 0)} members" for g in groups]
+                    natural = "Groups I'm in:\n" + "\n".join(lines)
+                else:
+                    natural = "I'm not in any groups."
+            else:
+                natural = f"Failed to get groups: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_get_group_participants":
+            group_jid = args.get("group_jid", "")
+            from services.bridge_api import bridge_get_group_participants
+            res = bridge_get_group_participants(group_jid)
+            if res.get("ok"):
+                participants = res.get("participants", [])
+                if participants:
+                    lines = [f"• {p.get('name', p.get('jid', '?'))} ({'admin' if p.get('is_admin') else 'member'})" for p in participants]
+                    natural = f"Participants in group:\n" + "\n".join(lines)
+                else:
+                    natural = "No participants found."
+            else:
+                natural = f"Failed to get participants: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_set_group_settings":
+            group_jid = args.get("group_jid", "")
+            settings = args.get("settings", {})
+            from services.bridge_api import bridge_set_group_settings
+            res = bridge_set_group_settings(group_jid, settings)
+            if res.get("ok"):
+                natural = "Group settings updated ✅"
+            else:
+                natural = f"Failed to update settings: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_lock_group":
+            group_jid = args.get("group_jid", "")
+            duration_seconds = int(args.get("duration_seconds", 0))
+            from services.bridge_api import bridge_lock_group
+            res = bridge_lock_group(group_jid, duration_seconds)
+            if res.get("ok"):
+                dur = "permanent" if duration_seconds == 0 else f"{duration_seconds}s"
+                natural = f"Group locked ({dur}) 🔒"
+            else:
+                natural = f"Failed to lock: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_unlock_group":
+            group_jid = args.get("group_jid", "")
+            from services.bridge_api import bridge_unlock_group
+            res = bridge_unlock_group(group_jid)
+            if res.get("ok"):
+                natural = "Group unlocked 🔓"
+            else:
+                natural = f"Failed to unlock: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_send_document":
+            jid = args.get("jid", "")
+            document_path = args.get("document_path", "")
+            caption = args.get("caption", "")
+            filename = args.get("filename", "")
+            from services.bridge_api import bridge_send_document
+            res = bridge_send_document(jid, document_path, caption, filename)
+            if res.get("ok"):
+                natural = "Document sent 📎"
+            else:
+                natural = f"Failed to send: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_get_message":
+            jid = args.get("jid", "")
+            message_id = args.get("message_id", "")
+            from services.bridge_api import bridge_get_message
+            res = bridge_get_message(jid, message_id)
+            if res.get("ok"):
+                natural = f"Message: {res.get('text', '')[:200]}..."
+            else:
+                natural = f"Failed to get message: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_search_messages":
+            jid = args.get("jid", "")
+            query = args.get("query", "")
+            limit = int(args.get("limit", 20))
+            from services.bridge_api import bridge_search_messages
+            res = bridge_search_messages(jid, query, limit)
+            if res.get("ok"):
+                messages_found = res.get("messages", [])
+                if messages_found:
+                    lines = [f"• {m.get('text', '')[:80]}" for m in messages_found[:10]]
+                    natural = f"Found {len(messages_found)} messages:\n" + "\n".join(lines)
+                else:
+                    natural = "No messages found."
+            else:
+                natural = f"Failed to search: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_download_media":
+            jid = args.get("jid", "")
+            message_id = args.get("message_id", "")
+            from services.bridge_api import bridge_download_media
+            res = bridge_download_media(message_id, jid)
+            if res.get("ok"):
+                natural = f"Downloaded: {res.get('path', '')} ({res.get('mime_type', '')}, {res.get('size', 0)} bytes)"
+            else:
+                natural = f"Failed to download: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_set_group_rules":
+            group_jid = args.get("group_jid", "")
+            from services.group_intel import update_group_context
+            from services.automation import get_automation_engine
+            eng = get_automation_engine()
+            updates = {}
+            if "no_stickers" in args:
+                updates["no_stickers"] = bool(args["no_stickers"])
+                eng.set_group_rule(group_jid, "no_stickers", bool(args["no_stickers"]))
+            if "no_links" in args:
+                updates["no_links"] = bool(args["no_links"])
+                eng.set_group_rule(group_jid, "no_links", bool(args["no_links"]))
+            if "silent_mode" in args:
+                updates["silent_mode"] = bool(args["silent_mode"])
+            update_group_context(group_jid, **updates)
+            natural = f"Group rules updated for {group_jid} ✅: {updates}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "convert_document":
+            file_path = args.get("file_path", "")
+            target_format = args.get("target_format", "pdf")
+            from services.doc_converter import convert_document
+            try:
+                out = convert_document(file_path, target_format)
+                natural = f"Converted {file_path} to {target_format.upper()} 📄: {out}"
+                tool_results["document_list"] = tool_results.get("document_list", [])
+                tool_results["document_list"].append({"path": out, "filename": os.path.basename(out), "format": target_format})
+            except Exception as err:
+                natural = f"Failed to convert document: {err}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "edit_document":
+            file_path = args.get("file_path", "")
+            replacements = args.get("replacements", {})
+            additions = args.get("additions", [])
+            from services.doc_converter import edit_docx
+            try:
+                out = edit_docx(file_path, replacements, additions)
+                natural = f"Edited document saved to 📄: {out}"
+                tool_results["document_list"] = tool_results.get("document_list", [])
+                tool_results["document_list"].append({"path": out, "filename": os.path.basename(out), "format": "docx"})
+            except Exception as err:
+                natural = f"Failed to edit document: {err}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "schedule_conditional_workflow":
+            contact = args.get("contact", "")
+            msg = args.get("initial_message", "")
+            init_time = args.get("initial_time", "16:00")
+            deliv_to = args.get("deliver_to", user_id or sender_jid or "")
+            deliv_time = args.get("delivery_time", "17:00")
+            
+            from services.automation import get_automation_engine
+            import time
+            from datetime import datetime, timedelta
+            now_dt = datetime.now()
+            
+            def parse_time_str(ts_str):
+                m = re.search(r'(\d{1,2})(?::(\d{2}))?\s*(am|pm)?', str(ts_str).lower())
+                if not m:
+                    return time.time() + 3600
+                hr = int(m.group(1))
+                mn = int(m.group(2) or 0)
+                ampm = m.group(3)
+                if ampm == 'pm' and hr < 12: hr += 12
+                elif ampm == 'am' and hr == 12: hr = 0
+                dt = now_dt.replace(hour=hr, minute=mn, second=0, microsecond=0)
+                if dt.timestamp() < time.time():
+                    dt = dt + timedelta(days=1)
+                return dt.timestamp()
+
+            init_ts = parse_time_str(init_time)
+            deliv_ts = parse_time_str(deliv_time)
+
+            eng = get_automation_engine()
+            eng.schedule_message(contact, msg, init_ts)
+            relay_id = eng.register_conditional_doc_relay(contact, deliv_to, deliv_ts)
+            
+            natural = f"Scheduled workflow 🗓️:\n1. Send msg to {contact} at {init_time}: '{msg}'\n2. When {contact} sends the file, forward to {deliv_to} at {deliv_time} (Task {relay_id}) ✅"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+
+# Dynamic tools (dyn_*) - execute from registry
+        elif name.startswith("dyn_"):
+            from services.dynamic_tools import get_dynamic_registry
+            registry = get_dynamic_registry()
+            try:
+                result = registry.execute(name, args)
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(result)})
+            except Exception as e:
+                log.error("[DynamicTools] Execution failed for %s: %s", name, e)
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps({"ok": False, "error": str(e)})})
+            continue
+
+    return tool_results
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _now() -> float:
@@ -1775,7 +2823,7 @@ def _now() -> float:
 
 def _enqueue_download_task(tool_name: str, query: str, media_type: str,
                            user_id: str, sender_jid: str | None,
-                           media_service, messages, tool_call) -> str | None:
+                           media_service, messages, tool_call, opt_params: dict = None) -> str | None:
     """Shared logic for download_audio / download_video.
 
     Returns:
@@ -1791,9 +2839,17 @@ def _enqueue_download_task(tool_name: str, query: str, media_type: str,
     if not media_service:
         return json.dumps({"ok": False, "error": "media service unavailable"})
 
+    # Apply optimization params
+    if opt_params is None:
+        opt_params = {}
+
     # Direct URL → enqueue background download
     if re.match(r'^https?://', query):
         url_label = query.split("/")[-1][:30] or "from link"
+        
+        # Apply optimization: cap max size
+        max_size_mb = opt_params.get("max_size_mb", 50)
+        
         t = task_store.create(
             kind="background",
             name=f"download_{media_type}",
@@ -1801,13 +2857,17 @@ def _enqueue_download_task(tool_name: str, query: str, media_type: str,
                     "kwargs": {"url": query, "media_type": media_type,
                                "owner_jid": sender_jid or "",
                                "owner_user_id": user_id or "",
-                               "task_id": "TBD"},
-                    "progress_label": (f"🎬 downloading {url_label}" if media_type == "video"
-                                        else f"🎵 downloading {url_label}")},
+                               "task_id": "TBD",
+                               "max_size_mb": max_size_mb,
+                               "stream_only": opt_params.get("stream_only", False),
+                               "cleanup_after_send": opt_params.get("cleanup_after_send", False),
+                               "prefer_audio_over_video": opt_params.get("prefer_audio_over_video", False)},
+                     "progress_label": (f"🎬 downloading {url_label}" if media_type == "video"
+                                         else f"🎵 downloading {url_label}")},
             owner_user_id=user_id or "",
             owner_jid=sender_jid or "",
             notify_on="done",
-            metadata={"url": query, "media_type": media_type},
+            metadata={"url": query, "media_type": media_type, "opt_params": opt_params},
         )
         event_log.append("tool", "task_enqueued",
                          summary=f"{media_type} download task #{t['id']} queued",
@@ -1841,13 +2901,17 @@ def _enqueue_download_task(tool_name: str, query: str, media_type: str,
                 "kwargs": {"url": chosen["url"], "media_type": media_type,
                            "owner_jid": sender_jid or "",
                            "owner_user_id": user_id or "",
-                           "task_id": "TBD"},
-                "progress_label": (f"🎬 downloading {title_short}" if media_type == "video"
-                                    else f"🎵 downloading {title_short}")},
+                           "task_id": "TBD",
+                           "max_size_mb": opt_params.get("max_size_mb", 50),
+                           "stream_only": opt_params.get("stream_only", False),
+                           "cleanup_after_send": opt_params.get("cleanup_after_send", False),
+                           "prefer_audio_over_video": opt_params.get("prefer_audio_over_video", False)},
+                 "progress_label": (f"🎬 downloading {title_short}" if media_type == "video"
+                                     else f"🎵 downloading {title_short}")},
         owner_user_id=user_id or "",
         owner_jid=sender_jid or "",
         notify_on="done",
-        metadata={"query": query, "title": chosen.get("title"), "media_type": media_type},
+        metadata={"query": query, "title": chosen.get("title"), "media_type": media_type, "opt_params": opt_params},
     )
     event_log.append("tool", "task_enqueued",
                      summary=f"{media_type} download task #{t['id']} queued for '{chosen.get('title')}'",

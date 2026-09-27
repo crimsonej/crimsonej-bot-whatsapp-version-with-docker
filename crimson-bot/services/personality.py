@@ -24,7 +24,7 @@ from services.memory import profile_mgr
 # ─── Persistent Mood State ────────────────────────────────────────────────────
 
 _MOOD_STATE_FILE = os.path.join(BASE_DIR, "mood_state.json")
-_mood_lock = threading.Lock()
+_mood_lock = threading.RLock()
 _mood_state: dict[str, dict] = {}  # session_key -> {mood, tone, intensity, updated_at}
 
 def _load_mood_state() -> None:
@@ -257,6 +257,17 @@ def detect_mood(message: str, user_id: str, context: dict = None, session_key: s
         
         if score > 0:
             scores[mood] = score * triggers["weight"]
+
+    # Keep the mood prompt consistent with the separate roast decision used
+    # later in the response pipeline.
+    roast_markers = (
+        "roast me", "roast him", "roast her", "clown me", "clown him", "clown her",
+        "burn me", "destroy me", "cook me", "stupid", "idiot", "dumb", "fool",
+        "loser", "trash", "garbage", "useless", "worthless", "pathetic", "shut up", "fuck off",
+        "kys",
+    )
+    if any(marker in msg_lower for marker in roast_markers):
+        scores[Mood.SAVAGE] = max(scores.get(Mood.SAVAGE, 0), 3.5)
     
     # Relationship modifier
     rel = get_relationship_level(user_id)
