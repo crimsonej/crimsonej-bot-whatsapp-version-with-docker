@@ -26,7 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tesseract-ocr-fra \
         tesseract-ocr-spa \
         tesseract-ocr-deu \
-        tesseract-ocr-zho \
+        tesseract-ocr-chi-sim \
+        tesseract-ocr-chi-tra \
         tesseract-ocr-ara \
         tesseract-ocr-rus \
         tesseract-ocr-por \
