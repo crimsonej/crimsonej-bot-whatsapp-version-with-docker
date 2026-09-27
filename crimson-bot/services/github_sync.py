@@ -13,6 +13,7 @@ import os
 import threading
 import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from core.config import cfg, log
 from services.github_search import (
@@ -51,7 +52,19 @@ _last_push_time: float = 0
 
 def get_backup_repo() -> str:
     """Get backup repo from config/env."""
-    return (cfg("github_backup_repo") or os.getenv("GITHUB_BACKUP_REPO") or "").strip()
+    repo = (cfg("github_backup_repo") or os.getenv("GITHUB_BACKUP_REPO") or "").strip()
+    if not repo:
+        return ""
+    if repo.startswith("git@github.com:"):
+        repo = repo.split(":", 1)[1]
+    elif "://" in repo:
+        parsed = urlparse(repo)
+        if parsed.hostname == "github.com":
+            repo = parsed.path
+    repo = repo.removeprefix("github.com/").strip("/")
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    return repo
 
 
 def is_sync_enabled() -> bool:
@@ -294,9 +307,9 @@ def _sync_loop():
     interval = int(cfg("github_sync_interval_sec") or 3600)  # default 1 hour
     log.info("[GitHubSync] Background sync started, interval=%ds", interval)
 
-    # Initial pull on startup
+    # Restore existing state and establish a fresh backup on startup.
     if is_sync_enabled():
-        pull_from_github()
+        sync_now()
 
     while not _sync_stop.is_set():
         _sync_stop.wait(timeout=interval)

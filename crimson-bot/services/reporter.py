@@ -23,6 +23,7 @@ import time
 
 from core.config import cfg, log
 from core.eventlog import event_log
+from services.bridge_api import BRIDGE_BASE
 from services.tasks import task_store
 
 
@@ -31,8 +32,8 @@ _reporter_stop = threading.Event()
 
 
 class Reporter:
-    BRIDGE_URL = "http://127.0.0.1:7860/send_message"
-    BRIDGE_HEALTH_URL = "http://127.0.0.1:7860/health/full"
+    BRIDGE_URL = f"{BRIDGE_BASE}/send_message"
+    BRIDGE_HEALTH_URL = f"{BRIDGE_BASE}/health/full"
 
     def __init__(self) -> None:
         self._poll_secs = max(5, int(cfg("bridge_health_interval_sec") or 30))

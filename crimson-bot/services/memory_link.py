@@ -129,16 +129,6 @@ def link_session_memory(user_id: str, session_key: str, message: str, context: d
                 if context and context.get("topic"):
                     links["entities"][key]["contexts"].append(context["topic"])
         
-        # Cross-reference: find related previous sessions
-        current_entities = set()
-        for ent_list in entities.values():
-            current_entities.update(ent_list)
-        
-        for prev_session_key, session in sessions._store.items():
-            if session_key != prev_session_key:
-                # Check if same user (approximate by session key prefix)
-                pass  # Simplified for now
-        
         links["last_updated"] = time.time()
     
     _save_links()

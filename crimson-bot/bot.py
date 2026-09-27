@@ -20,6 +20,7 @@ import tempfile
 import time
 import random
 from datetime import datetime
+from ipaddress import ip_address, ip_network
 from typing import Any
 from urllib.parse import quote
 
@@ -135,14 +136,31 @@ from services.personality import (
 # ── Flask App Setup ──────────────────────────────────────────────────────────
 app = Flask(__name__)
 
+_INTERNAL_NETWORKS = tuple(ip_network(network) for network in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"
+))
+
+
+def _is_internal_request() -> bool:
+    try:
+        address = ip_address(request.remote_addr or "")
+        mapped_address = getattr(address, "ipv4_mapped", None)
+        if mapped_address:
+            address = mapped_address
+        return address.is_loopback or any(address in network for network in _INTERNAL_NETWORKS)
+    except ValueError:
+        return False
+
 @app.before_request
 def require_internal_api_token():
     """Protect bot control routes while leaving health probes available."""
     if request.path in ("/health", "/metrics"):
         return None
+    if _is_internal_request():
+        return None
     expected_token = os.getenv("CRIMSON_API_TOKEN")
     if not expected_token:
-        return None
+        return jsonify({"error": "unauthorized"}), 401
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.replace("Bearer ", "").strip() if auth_header.startswith("Bearer ") else request.args.get("token") or ""
     if token != expected_token:
@@ -2254,7 +2272,8 @@ def _master_control_jids(user_phone: str | None = None) -> list[str]:
     if owner_jid:
         out.add(owner_jid)
 
-    for phone, profile in profile_mgr.profiles.items():
+    profiles = getattr(profile_mgr, "profiles", {})
+    for phone, profile in profiles.items():
         if profile.get("is_creator"):
             digits = "".join(ch for ch in str(phone) if ch.isdigit())
             if digits:
@@ -2303,6 +2322,8 @@ def _notify_raw_error(error: Exception, *, context: str = "", user_phone: str | 
 @app.errorhandler(Exception)
 def _global_error_handler(exc: Exception):
     """Keep the active chat in-character while forwarding raw technical details to owners."""
+    log.error("[GlobalError] route=%s method=%s", request.path, request.method,
+              exc_info=(type(exc), exc, exc.__traceback__))
     try:
         user_phone = None
         try:
@@ -2356,7 +2377,6 @@ def route_health():
     """Health check endpoint with detailed status."""
     try:
         from services.health import get_status
-        from services.storage import dynamic_tools_active, sessions_active, profiles_total
         from services.dynamic_tools import get_dynamic_registry
         
         status = get_status()
@@ -2367,8 +2387,8 @@ def route_health():
         
         # Add gauges
         status["gauges"] = {
-            "sessions_active": sessions_active,
-            "profiles_total": profiles_total,
+            "sessions_active": sessions.active_count,
+            "profiles_total": len(profile_mgr.get_all_known_names()),
             "dynamic_tools": len(registry.tools),
         }
         

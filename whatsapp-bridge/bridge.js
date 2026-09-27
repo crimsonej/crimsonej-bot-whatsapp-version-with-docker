@@ -34,7 +34,6 @@ const AI_SERVER = process.env.AI_SERVER || 'http://localhost:5000/reply';
 // Helper with automatic fallback for DNS (ENOTFOUND) or connection (ECONNREFUSED) failures
 async function postToAIServer(payload, options = {}) {
     options.timeout = options.timeout || 90000;
-    options.headers = { ...(options.headers || {}), ...(process.env.CRIMSON_API_TOKEN ? { Authorization: `Bearer ${process.env.CRIMSON_API_TOKEN}` } : {}) };
     const urls = [AI_SERVER];
     if (!AI_SERVER.includes('127.0.0.1') && !AI_SERVER.includes('localhost')) {
         urls.push('http://127.0.0.1:5000/reply');
@@ -66,6 +65,13 @@ const RATE_LIMIT = 60;
 const requestRates = new Map();
 
 function authorized(req) {
+    const remoteAddress = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+    if (remoteAddress === '::1' || remoteAddress === '127.0.0.1') return true;
+    const octets = remoteAddress.split('.').map(Number);
+    const validIpv4 = octets.length === 4 && octets.every(value => Number.isInteger(value) && value >= 0 && value <= 255);
+    if (validIpv4 && (octets[0] === 10 ||
+        (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+        (octets[0] === 192 && octets[1] === 168))) return true;
     if (!API_TOKEN) return false;
     const header = req.headers.authorization || '';
     const supplied = header.startsWith('Bearer ') ? header.slice(7).trim() : '';

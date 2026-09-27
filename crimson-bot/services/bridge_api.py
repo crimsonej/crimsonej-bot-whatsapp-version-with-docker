@@ -15,7 +15,10 @@ import requests
 
 from core.config import log
 
-BRIDGE_BASE = os.environ.get("BRIDGE_BASE_URL", "http://127.0.0.1:7860")
+BRIDGE_BASE = os.environ.get("BRIDGE_BASE_URL") or (
+    f"http://127.0.0.1:{os.environ.get('BRIDGE_PORT') or os.environ.get('PORT', '7860')}"
+)
+BRIDGE_BASE = BRIDGE_BASE.rstrip("/")
 
 
 def _post(path: str, payload: dict, *, timeout: int) -> dict:
