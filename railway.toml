@@ -20,14 +20,26 @@ PORT = "7860"
 BOT_PORT = "5000"
 MEDIA_ROOT = "/media"
 DATA_DIR = "/data"
-# Required - add in Railway dashboard:
-# NVIDIA_API_KEY
-# GROQ_API_KEY
-# HF_API_KEY (optional)
-# GITHUB_TOKEN (for backup sync)
-# GITHUB_BACKUP_REPO (e.g., crimsonej/crimsonej-data)
-# CRIMSON_API_TOKEN (shared secret for bridge)
-# CREATOR_PHONE (your WhatsApp number digits)
+AUTH_DIR = "/data/auth_info_baileys"
+BOT_NAME = "crimsonej"
+MODEL = "meta/llama-3.2-90b-vision-instruct"
+ACTIVE_MODEL = "meta/llama-3.2-90b-vision-instruct"
+SCOUT_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
+PYTHONUNBUFFERED = "1"
+PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
+CHROME_BIN = "/usr/bin/chromium"
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
+TRADING_BRIEFING_ENABLED = "true"
+TRADING_BRIEFING_PRE_LONDON = "07:30"
+TRADING_BRIEFING_EOD = "21:30"
+# Configure in Railway Dashboard:
+# NVIDIA_API_KEY = "nvapi-..."
+# GROQ_API_KEY = "gsk_..."
+# HF_API_KEY = "hf_..."
+# GITHUB_TOKEN = "ghp_..."
+# GITHUB_BACKUP_REPO = "owner/repo"
+# CRIMSON_API_TOKEN = "shared_security_token"
+# CREATOR_PHONE = "256742184690"
 
 [services.crimson-bot.volumes]
 bot_data = "/data"
