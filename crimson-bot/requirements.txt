@@ -10,6 +10,7 @@ Pillow
 tiktoken
 PyPDF2
 pypdf
+pdf2docx
 python-docx
 python-pptx
 openpyxl
@@ -26,13 +27,9 @@ prometheus-client
 redis
 rq
 rq-scheduler
-qdrant-client
-sentence-transformers
-faster-whisper
-torch
-torchaudio
-pydub
 importlib-metadata
 click
 pyyaml
-
+pytest
+typeguard
+anyio

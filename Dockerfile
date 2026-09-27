@@ -1,15 +1,18 @@
 # Unified Dockerfile for Crimsonej (Python AI Engine + Node.js WhatsApp Bridge)
 FROM python:3.11-slim
 
-# Install Node.js 20, FFmpeg, and system dependencies
+# Install Node.js 20, FFmpeg, fonts, build tools, and system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ffmpeg \
         ca-certificates \
         git \
         procps \
-        nano \
-        vim \
+        build-essential \
+        libffi-dev \
+        libssl-dev \
+        fonts-liberation \
+        fontconfig \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -22,7 +25,9 @@ COPY whatsapp-bridge/package.json /app/whatsapp-bridge/package.json
 COPY whatsapp-bridge/package-lock.json /app/whatsapp-bridge/package-lock.json
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r /app/crimson-bot/requirements.txt && pip install --no-cache-dir -U yt-dlp
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r /app/crimson-bot/requirements.txt && \
+    pip install --no-cache-dir -U yt-dlp
 
 # Install Node.js dependencies
 WORKDIR /app/whatsapp-bridge

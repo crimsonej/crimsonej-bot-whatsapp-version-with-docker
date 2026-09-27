@@ -1,9 +1,8 @@
 # Railway Deployment Configuration
-# Copy this to railway.toml in your repo root
 
 [build]
 builder = "dockerfile"
-dockerfilePath = "crimson-bot/Dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 healthcheckPath = "/health"
@@ -12,13 +11,15 @@ restartPolicyType = "on-failure"
 restartPolicyMaxRetries = 10
 
 [services.crimson-bot]
-# Main AI engine
+# Main unified bot container
 builder = "dockerfile"
-dockerfilePath = "crimson-bot/Dockerfile"
+dockerfilePath = "Dockerfile"
 
 [services.crimson-bot.variables]
+PORT = "7860"
 BOT_PORT = "5000"
 MEDIA_ROOT = "/media"
+DATA_DIR = "/data"
 # Required - add in Railway dashboard:
 # NVIDIA_API_KEY
 # GROQ_API_KEY
@@ -30,21 +31,4 @@ MEDIA_ROOT = "/media"
 
 [services.crimson-bot.volumes]
 bot_data = "/data"
-media_data = "/media"
-
-[services.whatsapp-bridge]
-# WhatsApp Baileys bridge
-builder = "dockerfile"
-dockerfilePath = "whatsapp-bridge/Dockerfile"
-
-[services.whatsapp-bridge.variables]
-PORT = "7860"
-AI_SERVER = "http://crimson-bot:5000/reply"
-AUTH_DIR = "/data/auth_info_baileys"
-MEDIA_ROOT = "/media"
-# Required - add in Railway dashboard:
-# CRIMSON_API_TOKEN (must match bot's)
-
-[services.whatsapp-bridge.volumes]
-bridge_data = "/data"
 media_data = "/media"
