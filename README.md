@@ -57,14 +57,13 @@ WhatsApp → Node.js Bridge → Flask API → LLM + Tools
 
 - **SQLite** (`/data/crimson.db`) — Sessions, profiles, vaults, vectors, cache
 - **GitHub Backup** — Hourly push to private repo, auto-restore on boot
-- **Volumes** — Persistent across restarts (Railway/Render/Docker)
+- **Volumes** — Persistent across restarts (Railway/Docker)
 
 ## Deploy
 
 | Platform | Guide |
 |----------|-------|
 | **Railway** | [RAILWAY_QUICKSTART.md](RAILWAY_QUICKSTART.md) |
-| **Render** | Uses `docker-compose.yml` + `render.yaml` |
 | **Docker** | `docker-compose up -d` |
 | **Local** | See below |
 
