@@ -17,7 +17,7 @@
 | `GITHUB_TOKEN` | For backup | `ghp-xxxxx` (repo scope) |
 | `GITHUB_BACKUP_REPO` | For backup | `crimsonej/crimsonej-data` |
 | `CRIMSON_API_TOKEN` | Yes | `shared-secret-123` |
-| `CREATOR_PHONE` | Yes | `256742184690` |
+| `CREATOR_PHONE` | Yes | `123456789012` |
 | `HF_API_KEY` | Optional | `hf-xxxxx` |
 
 ### whatsapp-bridge service

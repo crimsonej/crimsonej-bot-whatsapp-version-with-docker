@@ -59,7 +59,7 @@ GITHUB_BACKUP_REPO=crimsonej/crimsonej-data  # Private repo for backups
 
 # Security
 CRIMSON_API_TOKEN=shared-secret-here    # Must match bridge
-CREATOR_PHONE=256742184690              # Your WhatsApp (digits only)
+CREATOR_PHONE=123456789012              # Your WhatsApp (digits only)
 
 # Optional
 BOT_PORT=5000                           # Railway overrides with $PORT
@@ -147,8 +147,8 @@ master control wipe cache/memory        # Reset state
 ```json
 {
   "message": "user text",
-  "sender": "256742184690@s.whatsapp.net",
-  "user_phone": "256742184690",
+  "sender": "123456789012@s.whatsapp.net",
+  "user_phone": "123456789012",
   "push_name": "Elijah",
   "group_name": "12345@g.us",          // optional
   "group_admins": ["admin@s.whatsapp.net"],  // optional
@@ -199,7 +199,7 @@ master control wipe cache/memory        # Reset state
   ],
   "active_model": "nvidia/nemotron-3-super-120b-a12b",
   "port": 5000,
-  "owner_jid": "256742184690@s.whatsapp.net",
+  "owner_jid": "123456789012@s.whatsapp.net",
   "relevance_threshold": 0.03,
   "session_ttl": 7200,
   "session_max_turns": 20,

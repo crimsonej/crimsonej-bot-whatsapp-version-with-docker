@@ -25,7 +25,7 @@ MODEL = "meta/llama-3.2-90b-vision-instruct"
 # Required - Add in Railway Dashboard:
 # NVIDIA_API_KEY = "nvapi-..."
 # GROQ_API_KEY = "gsk_..."
-# CREATOR_PHONE = "256742184690"
+# CREATOR_PHONE = "123456789012"
 
 [services.crimson-bot.volumes]
 bot_data = "/data"
