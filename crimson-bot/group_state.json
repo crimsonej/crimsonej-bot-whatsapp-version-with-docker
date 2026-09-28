@@ -41,26 +41,26 @@
     "rate_count": 1
   },
   "final-group@g.us": {
-    "total_messages": 2,
-    "last_active": 1788606541.8079536,
+    "total_messages": 6,
+    "last_active": 1790580742.2418482,
     "topic_keywords": {
-      "anyone": 2,
-      "watching": 2,
-      "the": 2,
-      "match": 2
+      "anyone": 6,
+      "watching": 6,
+      "the": 6,
+      "match": 6
     },
-    "rate_minute_bucket": 29810109,
+    "rate_minute_bucket": 29843012,
     "rate_count": 2
   },
   "final-group-2@g.us": {
-    "total_messages": 2,
-    "last_active": 1788606541.82767,
+    "total_messages": 6,
+    "last_active": 1790580742.2497518,
     "topic_keywords": {
-      "what": 2,
-      "you": 2,
-      "think": 2
+      "what": 6,
+      "you": 6,
+      "think": 6
     },
-    "rate_minute_bucket": 29810109,
+    "rate_minute_bucket": 29843012,
     "rate_count": 1
   }
 }

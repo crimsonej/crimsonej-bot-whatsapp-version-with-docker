@@ -74,7 +74,7 @@ def create_relay_request(
         },
         owner_user_id=user_id,
         owner_jid=creator_jid,
-        notify_on="done",
+        notify_on="never",
         metadata={"relay_request_id": request_data["request_id"]}
     )
     
@@ -88,7 +88,7 @@ def create_relay_request(
     }
 
 
-def notify_creator_of_relay(request_id: str, user_id: str) -> Dict[str, Any]:
+def notify_creator_of_relay(request_id: str, user_id: str, progress=None) -> Dict[str, Any]:
     """Notify creator (dad) about a contact request."""
     creator_jid = (cfg("owner_jid") or "").strip()
     if not creator_jid:
@@ -128,7 +128,9 @@ def notify_creator_of_relay(request_id: str, user_id: str) -> Dict[str, Any]:
     
     from services.bridge_api import bridge_send
     result = bridge_send(creator_jid, msg)
-    
+    if not result.get("ok"):
+        raise RuntimeError("Could not deliver the creator contact request")
+
     return {"ok": result.get("ok", False), "message_id": result.get("message_id")}
 
 

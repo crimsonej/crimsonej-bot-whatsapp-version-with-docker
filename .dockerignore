@@ -5,8 +5,14 @@
 whatsapp-bridge/auth_info_baileys/
 **/auth_info_baileys/
 **/node_modules/
+**/venv/
+**/.venv/
 **/__pycache__/
 **/*.pyc
+**/*.db
+**/*.db-*
+**/*.sqlite
+**/*.sqlite-*
 *.log
 *.pid
 *.jsonl

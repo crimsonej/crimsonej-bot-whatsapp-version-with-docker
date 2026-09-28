@@ -19,6 +19,14 @@
 | `CRIMSON_API_TOKEN` | Yes | `shared-secret-123` |
 | `CREATOR_PHONE` | Yes | `123456789012` |
 | `HF_API_KEY` | Optional | `hf-xxxxx` |
+| `YT_COOKIES` | Optional | Raw Netscape cookie text, browser-export JSON, a `Cookie:` header, or a path to `cookies.txt` |
+| `PUBLIC_BASE_URL` | Optional | Public HTTPS origin for temporary previews; Railway's `RAILWAY_PUBLIC_DOMAIN` is used when available |
+
+Set `YT_COOKIES` in Railway's variable editor and keep the cookie data private. The bot converts supported input formats into a temporary Netscape cookie file for yt-dlp, restricts it to the bot user, and removes generated files when the process exits. YouTube may invalidate exported sessions; refresh the variable when authentication expires.
+
+### Temporary Web Previews
+
+The bot can publish self-contained static previews at `/preview/<random-token>` through the public bridge. They are sandboxed, memory-only, and expire within six hours; restarting the service removes them early. This preview host does not execute backend code or install npm/Python project dependencies. Configure `PUBLIC_BASE_URL` only when Railway does not provide `RAILWAY_PUBLIC_DOMAIN`.
 
 ### whatsapp-bridge service
 | Variable | Required | Example |

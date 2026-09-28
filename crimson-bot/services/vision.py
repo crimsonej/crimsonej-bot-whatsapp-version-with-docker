@@ -17,7 +17,7 @@ import time
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from core.config import get_nvidia_key, get_hf_key, log
 
@@ -99,6 +99,48 @@ def _normalize_image_for_vlm(image_base64: str) -> tuple[str, str]:
         log.warning("[Vision] Could not normalize image payload, sending original: %s", exc)
         return cleaned, "image/jpeg"
 
+
+def animated_webp_contact_sheet(image_base64: str, max_frames: int = 8) -> str | None:
+    """Return an ordered PNG contact sheet when the input is an animated WebP."""
+    try:
+        raw = base64.b64decode(_clean_base64_payload(image_base64))
+        with Image.open(io.BytesIO(raw)) as source:
+            frame_count = getattr(source, "n_frames", 1)
+            if frame_count <= 1:
+                return None
+
+            count = min(frame_count, max(1, max_frames))
+            if count == 1:
+                indices = [0]
+            else:
+                indices = sorted({round(i * (frame_count - 1) / (count - 1)) for i in range(count)})
+
+            columns = min(4, len(indices))
+            rows = (len(indices) + columns - 1) // columns
+            tile_width, tile_height, label_height = 256, 256, 28
+            sheet = Image.new("RGB", (columns * tile_width, rows * (tile_height + label_height)), "white")
+            draw = ImageDraw.Draw(sheet)
+
+            for position, frame_index in enumerate(indices):
+                source.seek(frame_index)
+                frame = source.convert("RGBA")
+                frame.thumbnail((tile_width - 16, tile_height - 16), Image.Resampling.LANCZOS)
+                tile = Image.new("RGBA", (tile_width, tile_height), "white")
+                tile.alpha_composite(frame, ((tile_width - frame.width) // 2, (tile_height - frame.height) // 2))
+
+                column, row = position % columns, position // columns
+                x, y = column * tile_width, row * (tile_height + label_height)
+                sheet.paste(tile.convert("RGB"), (x, y + label_height))
+                draw.text((x + 8, y + 7), f"Frame {frame_index + 1}/{frame_count}", fill="black")
+
+            output = io.BytesIO()
+            sheet.save(output, format="PNG", optimize=True)
+            log.info("[Vision] Built contact sheet from %d animated WebP frames", len(indices))
+            return base64.b64encode(output.getvalue()).decode("ascii")
+    except Exception as exc:
+        log.warning("[Vision] Animated WebP frame extraction failed: %s", exc)
+        return None
+
 def analyze_image_with_nvidia(image_base64: str, prompt: str = "Describe this image in detail.", max_retries: int = 3) -> str:
     """Analyze image using NVIDIA's Llama-3.1-Nemotron-Nano-VL model."""
     api_key = get_nvidia_key()
@@ -124,19 +166,27 @@ def analyze_image_with_nvidia(image_base64: str, prompt: str = "Describe this im
         "temperature": 0.3
     }
 
-    for attempt in range(max_retries):
-        try:
-            response = requests.post(url, headers=headers, json=payload, timeout=15)
-            if response.status_code == 200:
-                data = response.json()
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                return content.strip() if content else "No description returned."
-            else:
-                log.warning(f"NVIDIA VLM attempt {attempt+1} failed: {response.status_code} - {response.text[:200]}")
-        except Exception as e:
-            log.warning(f"NVIDIA VLM attempt {attempt+1} exception: {e}")
-        if attempt < max_retries - 1:
-            time.sleep(2)
+    vision_models = [
+        os.getenv("NVIDIA_VISION_MODEL", "meta/llama-3.2-11b-vision-instruct"),
+        "meta/llama-3.2-90b-vision-instruct",
+    ]
+
+    for model_index, model in enumerate(dict.fromkeys(vision_models)):
+        payload["model"] = model
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=30)
+                if response.status_code == 200:
+                    data = response.json()
+                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    return content.strip() if content else "No description returned."
+                log.warning("NVIDIA VLM model %s attempt %d failed: %s - %s", model, attempt + 1, response.status_code, response.text[:200])
+                if response.status_code == 410:
+                    break
+            except Exception as e:
+                log.warning("NVIDIA VLM model %s attempt %d exception: %s", model, attempt + 1, e)
+            if attempt < max_retries - 1:
+                time.sleep(2)
 
     return "Could not analyze image/sticker."
 
@@ -185,7 +235,6 @@ def generate_image_nvidia_flux2(prompt: str, width: int = 1024, height: int = 10
         "seed": 0,
         "steps": min(max(steps, 1), 20),  # Clamp steps to valid range 1-20
         "cfg_scale": min(max(1.0, 1.0), 1.0),  # Must be <= 1.0
-        "sampler": "euler_ancestral"
     }
 
     # Hardened request: pre-resolve DNS, use session with retries for transient network/DNS issues

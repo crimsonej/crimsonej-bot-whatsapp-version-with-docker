@@ -128,6 +128,23 @@ def fetch_url_content(url: str, max_chars: int = 15000) -> Dict[str, Any]:
     except Exception as e:
         log.error(f"[WebReader] BS4 fallback failed for {url}: {e}")
 
+    try:
+        from services.browser import fetch_rendered_page
+        rendered = fetch_rendered_page(url, max_chars=max_chars)
+        if rendered.get("ok") and rendered.get("text"):
+            log.info(f"[WebReader] Chromium rendered {len(rendered['text'])} chars from {domain}")
+            return {
+                "ok": True,
+                "title": rendered.get("title") or domain,
+                "domain": domain,
+                "url": url,
+                "text": rendered["text"][:max_chars],
+                "rendered": True,
+                "error": None,
+            }
+    except Exception as e:
+        log.warning(f"[WebReader] Chromium fallback failed for {url}: {e}")
+
     return {
         "ok": False,
         "title": domain,

@@ -1,5 +1,5 @@
 # Unified Dockerfile for Crimsonej (Python AI Engine + Node.js WhatsApp Bridge)
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Install Node.js 20, FFmpeg, fonts, OCR, PDF tools, LibreOffice, ImageMagick, WebP, Chromium, media tools, and system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -57,7 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         lame \
         vorbis-tools \
         opus-tools \
-        exiftool \
+        libimage-exiftool-perl \
         mediainfo \
         chromium \
         chromium-driver \
@@ -65,15 +65,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq \
         net-tools \
         iputils-ping \
-        dnsutils \
+        bind9-dnsutils \
+        nmap \
+        whois \
         redis-server \
         htop \
         tree \
         psmisc \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
-    && sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml || true \
+    && (sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml || true) \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /tmp/amass.zip https://github.com/owasp-amass/amass/releases/download/v4.1.0/amass_Linux_amd64.zip \
+    && echo "a5cbbccf1b4a7493f36eb7b51beb19c77a8ac044a4edfb2a5f13d6a00601eb29  /tmp/amass.zip" | sha256sum -c - \
+    && unzip -p /tmp/amass.zip amass_Linux_amd64/amass > /usr/local/bin/amass \
+    && chmod 0755 /usr/local/bin/amass \
+    && rm /tmp/amass.zip
 
 WORKDIR /app
 
@@ -90,6 +98,11 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Install Node.js dependencies
 WORKDIR /app/whatsapp-bridge
 RUN npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund
+
+# Pinned client-side React/Vite toolchain for temporary web-app previews.
+WORKDIR /app/preview-runtime
+COPY preview-runtime/package.json ./package.json
+RUN npm install --omit=dev --no-audit --no-fund
 
 # Copy entire application codebase
 WORKDIR /app

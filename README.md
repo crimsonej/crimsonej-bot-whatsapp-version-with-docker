@@ -24,6 +24,8 @@ A friendly, smart bot that lives in your WhatsApp. Remembers you, searches the w
 | **Analyze images** | Send a photo → "that's a sunset over mountains" |
 | **Read documents** | Send PDF → "summary: ..." |
 | **Learn facts** | `/learn I love ugali` → stored permanently |
+| **Creator OSINT** | Passive email, username, and domain research using tools packaged in the bot's Docker image |
+| **Temporary previews** | Publish a self-contained static web preview with an expiring HTTPS URL (maximum six hours) |
 
 ## Trading Coach (Optional Add-on)
 
@@ -118,6 +120,8 @@ cd whatsapp-bridge && npm start
 
 **Trading (when you ask):**
 `/analyze`, `/teach`, `/walkthrough`, `/quiz`, `/journal`, `/brief`, `/price`, `/mtf`, `/patterns`, `/briefing_subscribe`
+
+**Creator tools:** `osint_investigate` runs public-source email, username, or domain research in the bot container. Send `/metadata` with one attached file to inspect a small metadata allowlist; it does not crawl disks or report GPS/serial identifiers. Temporary static previews return an HTTPS URL and expire within six hours.
 
 ## Master Control (Creator Only)
 

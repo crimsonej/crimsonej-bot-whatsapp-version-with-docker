@@ -7,6 +7,7 @@ Media downloading, format conversion, and public host uploader.
 from __future__ import annotations
 
 import json
+import atexit
 import os
 import random
 import re
@@ -15,28 +16,69 @@ import sys
 import tempfile
 import threading
 import time
+from difflib import SequenceMatcher
 import requests
 
 from core.config import log
 
 LAST_DL_ERROR = "No downloads attempted yet"
 CF_WORKER_URL = os.environ.get("CF_WORKER_URL", "")
+_COOKIE_TEMP_FILES: set[str] = set()
+
+
+def _cleanup_cookie_temp_files() -> None:
+    for path in _COOKIE_TEMP_FILES:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+atexit.register(_cleanup_cookie_temp_files)
+
+def _update_ytdlp() -> bool:
+    try:
+        log.info("[Media] Checking yt-dlp updates...")
+        res = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        if res.returncode == 0:
+            log.info("[Media] yt-dlp update check completed successfully.")
+            return True
+        log.warning("[Media] yt-dlp update failed: %s", res.stderr[-300:])
+    except Exception as e:
+        log.warning("[Media] yt-dlp update exception: %s", e)
+    return False
+
 
 def update_ytdlp_async() -> None:
-    """Run yt-dlp update in a background thread on startup to ensure YouTube format compatibility."""
-    def _update():
-        try:
-            log.info("[Media] Checking yt-dlp updates...")
-            res = subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"], capture_output=True, text=True, timeout=90)
-            if res.returncode == 0:
-                log.info("[Media] yt-dlp update check completed successfully.")
-            else:
-                log.debug("[Media] yt-dlp update check result: %s", res.stderr[:150])
-        except Exception as e:
-            log.debug("[Media] yt-dlp update check exception: %s", e)
-
-    t = threading.Thread(target=_update, name="YtDlpUpdater", daemon=True)
+    """Check for yt-dlp updates in the background on startup."""
+    t = threading.Thread(target=_update_ytdlp, name="YtDlpUpdater", daemon=True)
     t.start()
+
+
+def _needs_ytdlp_update(output: str) -> bool:
+    text = output.lower()
+    return any(marker in text for marker in (
+        "nsig extraction failed",
+        "signature extraction failed",
+        "unable to extract player response",
+    ))
+
+
+def _needs_cookie_refresh(output: str) -> bool:
+    text = output.lower()
+    return any(marker in text for marker in (
+        "sign in to confirm",
+        "cookies are no longer valid",
+        "cookies have expired",
+        "--cookies for the authentication",
+        "--cookies for authentication",
+        "authentication. see https://github.com/yt-dlp",
+    ))
 
 INVIDIOUS_INSTANCES = [
     "https://yewtu.eu",
@@ -279,6 +321,76 @@ def upload_file_public(file_path: str) -> str | None:
         log.debug("[Upload] transfer.sh failed: %s", e)
     return None
 
+
+def _resolve_cookie_file() -> str | None:
+    """Resolve YT_COOKIES as a path, Netscape file text, JSON export, or cookie header."""
+    raw = (os.getenv("YT_COOKIES", "") or "").strip()
+    if not raw:
+        return None
+
+    if os.path.isfile(raw):
+        try:
+            with open(raw, "r", encoding="utf-8") as fh:
+                file_content = fh.read()
+        except (OSError, UnicodeDecodeError):
+            return None
+        if file_content.startswith("# Netscape") or ("\t" in file_content and not file_content.lstrip().startswith(("{", "["))):
+            return raw
+        raw = file_content.strip()
+        if not raw:
+            return None
+
+    lines: list[str] = []
+
+    cookie_header = re.sub(r"^Cookie:\s*", "", raw, flags=re.IGNORECASE)
+    try:
+        payload = json.loads(cookie_header)
+    except (json.JSONDecodeError, TypeError):
+        payload = None
+
+    if isinstance(payload, (dict, list)):
+        cookies = payload if isinstance(payload, list) else payload.get("cookies", [])
+        if not isinstance(cookies, list):
+            cookies = []
+        if isinstance(payload, dict) and not cookies and all(key in payload for key in ("name", "value", "domain")):
+            cookies = [payload]
+        lines = ["# Netscape HTTP Cookie File"]
+        for cookie in cookies:
+            if not isinstance(cookie, dict) or not cookie.get("name"):
+                continue
+            domain = str(cookie.get("domain") or cookie.get("host") or ".youtube.com").replace("\t", " ")
+            path = str(cookie.get("path") or "/").replace("\t", " ")
+            secure = "TRUE" if cookie.get("secure") or cookie.get("isSecure") else "FALSE"
+            expires = cookie.get("expirationDate") or cookie.get("expiry") or cookie.get("expires") or 0
+            try:
+                expires = int(float(expires))
+            except (TypeError, ValueError):
+                expires = 0
+            host_only = bool(cookie.get("hostOnly") or cookie.get("host_only"))
+            include_subdomains = "FALSE" if host_only else "TRUE"
+            value = str(cookie.get("value") or "").replace("\t", " ").replace("\n", " ")
+            name = str(cookie["name"]).replace("\t", " ").replace("\n", " ")
+            lines.append("\t".join((domain, include_subdomains, path, secure, str(expires), name, value)))
+    elif raw.startswith("# Netscape") or "\t" in raw:
+        lines = raw.splitlines()
+    elif "=" in cookie_header:
+        lines = ["# Netscape HTTP Cookie File"]
+        for item in re.split(r"[;\n]+", cookie_header):
+            if "=" not in item:
+                continue
+            name, value = item.strip().split("=", 1)
+            if name:
+                lines.append(f".youtube.com\tFALSE\t/\tFALSE\t0\t{name.strip()}\t{value.strip()}")
+
+    if not lines:
+        return None
+    descriptor, temp_path = tempfile.mkstemp(prefix="yt_cookies_", suffix=".txt")
+    os.chmod(temp_path, 0o600)
+    _COOKIE_TEMP_FILES.add(temp_path)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return temp_path
+
 def download_youtube(url: str, media_type: str = "audio", retries: int = 2) -> tuple[str, str] | None:
     download_youtube_sync(url, media_type, retries=retries)
 
@@ -286,7 +398,7 @@ def download_youtube(url: str, media_type: str = "audio", retries: int = 2) -> t
 # ── Self-awareness wrapper ────────────────────────────────────────────────────
 def download_youtube_task(*, url: str, media_type: str, owner_jid: str = "",
                           owner_user_id: str = "", task_id: str | None = None,
-                          progress=None) -> dict:
+                          max_size_mb: int | None = 50, progress=None) -> dict:
     """Action fn for the dispatcher.
 
     The `progress` argument is a `services.progress.ProgressSession` injected
@@ -301,7 +413,7 @@ def download_youtube_task(*, url: str, media_type: str, owner_jid: str = "",
         except Exception:
             pass
 
-    res = download_youtube_sync(url, media_type, progress=progress)
+    res = download_youtube_sync(url, media_type, progress=progress, max_size_mb=max_size_mb)
     if not res:
         raise RuntimeError(LAST_DL_ERROR or "download failed")
     path, filename = res
@@ -321,7 +433,8 @@ def download_youtube_task(*, url: str, media_type: str, owner_jid: str = "",
 
 
 def download_youtube_sync(url: str, media_type: str = "audio", retries: int = 2,
-                           *, progress=None) -> tuple[str, str] | None:
+                           *, max_size_mb: int | None = 50, progress=None,
+                           _updated_once: bool = False) -> tuple[str, str] | None:
     global LAST_DL_ERROR
     LAST_DL_ERROR = "Download in progress..."
 
@@ -344,11 +457,12 @@ def download_youtube_sync(url: str, media_type: str = "audio", retries: int = 2,
         # us a video with audio instead of a video-only stream.
         "--extractor-args", "youtube:player_client=android",
     ]
+    if max_size_mb and max_size_mb > 0:
+        common_opts += ["--max-filesize", f"{max_size_mb}M"]
 
     yt_cookies = os.getenv("YT_COOKIES", "").strip()
-    cookie_file = None
-    if yt_cookies and os.path.isfile(yt_cookies):
-        cookie_file = yt_cookies
+    cookie_file = _resolve_cookie_file() if yt_cookies else None
+    if cookie_file:
         common_opts += ["--cookies", cookie_file]
 
     if media_type == "audio":
@@ -424,8 +538,25 @@ def download_youtube_sync(url: str, media_type: str = "audio", retries: int = 2,
 
             if rc != 0:
                 tail = "\n".join(stderr_tail)[-300:]
+                if _needs_cookie_refresh(tail):
+                    LAST_DL_ERROR = "YouTube requires authentication for this video. Configure YT_COOKIES in Railway to download it."
+                    log.warning("[Media] YouTube requires cookies; stopping retries")
+                    break
                 LAST_DL_ERROR = f"yt-dlp error ({rc}): {tail}"
                 log.warning("[Media] yt-dlp failed rc=%s: %s", rc, tail)
+                if _needs_cookie_refresh(tail):
+                    LAST_DL_ERROR = "YouTube rejected the current session. Refresh the YT_COOKIES file and try again."
+                    break
+                if not _updated_once and _needs_ytdlp_update(tail):
+                    if _update_ytdlp():
+                        return download_youtube_sync(
+                            url,
+                            media_type,
+                            retries=retries,
+                            max_size_mb=max_size_mb,
+                            progress=progress,
+                            _updated_once=True,
+                        )
                 continue
 
             # collect candidate files produced by yt-dlp
@@ -610,10 +741,26 @@ def _score_search_hit(hit: dict, media_type: str, query: str = "") -> int:
         _stop = {"the", "a", "an", "of", "to", "in", "for", "and", "with", "official", "video", "lyrics", "youtube", "music", "audio"}
         q_tokens = {t for t in re.findall(r"[a-z0-9]+", ql) if t not in _stop}
         t_tokens = {t for t in re.findall(r"[a-z0-9]+", title) if t not in _stop}
-        overlap = len(q_tokens & t_tokens)
-        score += overlap * 2
-        extra = len(t_tokens - q_tokens)
-        score -= extra * 3
+        channel_tokens = {t for t in re.findall(r"[a-z0-9]+", channel) if t not in _stop}
+        score += len(q_tokens & channel_tokens) * 4
+        matched_title_tokens = set()
+        for query_token in q_tokens:
+            if query_token in t_tokens:
+                matched_title_tokens.add(query_token)
+                continue
+            if len(query_token) < 5:
+                continue
+            close_title_token = next((
+                title_token for title_token in t_tokens - matched_title_tokens
+                if len(title_token) >= 5
+                and SequenceMatcher(None, query_token, title_token).ratio() >= 0.8
+            ), None)
+            if close_title_token:
+                matched_title_tokens.add(close_title_token)
+        overlap = len(matched_title_tokens)
+        score += overlap * 3
+        extra = len(t_tokens - matched_title_tokens)
+        score -= extra * 2
         if ql.strip() in title or title in ql.strip():
             score += 10
 

@@ -156,6 +156,8 @@ def require_internal_api_token():
     """Protect bot control routes while leaving health probes available."""
     if request.path in ("/health", "/metrics"):
         return None
+    if request.method == "GET" and re.fullmatch(r"/preview/[A-Za-z0-9_-]{32,64}", request.path):
+        return None
     if _is_internal_request():
         return None
     expected_token = os.getenv("CRIMSON_API_TOKEN")
@@ -484,13 +486,18 @@ def _limit_emojis(text: str, max_keep: int) -> str:
     return (stripped + sep + keep).strip()
 
 def _sticker_reply_from_visual(image_b64: str, user_phone: str, sender: str) -> dict:
+    animation_sheet = vision_svc.animated_webp_contact_sheet(image_b64)
+    analysis_image = animation_sheet or image_b64
+    analysis_prompt = (
+        "Analyze this contact sheet from an animated WhatsApp sticker. Read the labeled frames in order; "
+        "describe what changes or moves, the subject's expression and gesture, visible text, emotion, joke, and likely intent. "
+        "Be specific and keep it to 2 compact sentences."
+        if animation_sheet else
+        "Analyze this WhatsApp sticker like a chat reaction. Identify the subject, facial expression, gesture/pose, visible text, emotion, joke, and likely intent. Be specific and avoid generic wording. Keep it to 2 compact sentences."
+    )
     desc = vision_svc.analyze_image_with_nvidia(
-        image_b64,
-        (
-            "Analyze this WhatsApp sticker like a chat reaction. Identify the subject, "
-            "facial expression, gesture/pose, visible text, emotion, joke, and likely intent. "
-            "Be specific and avoid generic wording. Keep it to 2 compact sentences."
-        ),
+        analysis_image,
+        analysis_prompt,
     )
     if _vision_failed(desc):
         log.warning("[Sticker] Vision failed or unavailable: %s", desc)
@@ -568,7 +575,7 @@ def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted:
         if len(parts) < 3:
             return {"reply": "Usage: `relay approve <id> [your reply]` or `relay decline <id> [reason]`"}
         
-        action = parts[1]
+        action = parts[1].lower()
         request_id = parts[2]
         response_text = parts[3] if len(parts) > 3 else ""
         
@@ -1268,6 +1275,31 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
         " [SITUATIONAL AWARENESS: You are Crimsonej. Respond naturally and helpfully.]\n\n"
     )
     system_prompt += cfg("system_prompt")
+    try:
+        from services.github_sync import get_sync_status
+
+        backup_status = get_sync_status()
+        last_push = backup_status.get("last_push")
+        last_push_text = (
+            datetime.fromtimestamp(last_push, TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+            if last_push else "not yet recorded"
+        )
+        push_stats = backup_status.get("last_push_stats") or {}
+        stats_text = ", ".join(f"{key}={value}" for key, value in push_stats.items()) or "not yet recorded"
+        system_prompt += (
+            "\n\n[BACKUP STATUS FOR THIS INSTANCE]\n"
+            f"GitHub backup configured: {'yes' if backup_status.get('enabled') else 'no'}.\n"
+            f"Automatic sync worker running: {'yes' if backup_status.get('running') else 'no'}.\n"
+            f"Sync interval: {backup_status.get('interval_seconds', 3600)} seconds.\n"
+            f"Persistent data volume mounted: {'yes' if backup_status.get('data_dir_mounted') else 'no'}.\n"
+            f"Last push: {last_push_text}; latest item counts: {stats_text}.\n"
+            "When asked about backups, answer from these live facts. Do not claim that a backup completed "
+            "when the latest push is missing or reports errors, and distinguish GitHub backups from a persistent volume.\n"
+        )
+    except Exception:
+        system_prompt += (
+            "\n\n[BACKUP STATUS] Live backup status is unavailable. Do not guess whether automatic backups are active.\n"
+        )
     system_prompt += build_personality_prompt(user_id, question, personality_context, session_key)
 
     # ── Per-user profile context (name, facts, interests, familiarity) ────────
@@ -1491,6 +1523,20 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
         pass
 
     return reply
+
+_MEDIA_REPLY_FIELDS = (
+    "image", "image_list", "image_base64", "media_base64",
+    "sticker", "sticker_list", "audio", "audio_list",
+    "video", "video_list", "document_list", "filenames",
+    "filename", "file_path", "file_name", "file_format",
+)
+
+
+def _build_reply_payload(model_reply: dict, reply_text: str) -> dict:
+    payload = {"reply": reply_text}
+    payload.update({field: model_reply[field] for field in _MEDIA_REPLY_FIELDS if field in model_reply})
+    return payload
+
 
 # ── Flask API Routes ─────────────────────────────────────────────────────────
 @app.route("/reply", methods=["GET", "POST"])
@@ -1778,10 +1824,41 @@ def route_reply():
 
     # ── Auto-learn contact name & bump interaction count ──────────────────────
     profile = profile_mgr.touch(user_phone, push_name=push_name or None)
+    from services.access_control import is_configured_creator
+    canonical_creator = is_configured_creator(user_phone, sender_jid)
+    if bool(profile.get("is_creator")) != canonical_creator:
+        profile["is_creator"] = canonical_creator
+        profile_mgr.save()
     if sender_jid and not sender_jid.endswith("@g.us"):
         profile["jid"] = sender_jid
         profile_mgr.save()
+
+    if raw_question.strip().lower().startswith("/metadata"):
+        if not canonical_creator or is_group:
+            from services.access_control import record_restricted_attempt
+            record_restricted_attempt(user_phone, sender_jid, "uploaded-file metadata")
+            return jsonify({"reply": "That metadata inspection is creator-only and works only in a direct chat."}), 403
+        file_data = (
+            body.get("document_data") or body.get("image_base64")
+            or body.get("image_data") or body.get("sticker_data") or ""
+        )
+        filename = body.get("document_name") or body.get("filename") or "attached-file"
+        from services.osint import extract_uploaded_file_metadata
+        result = extract_uploaded_file_metadata(file_data, filename)
+        if not result.get("ok"):
+            return jsonify({"reply": result.get("error", "Could not read attachment metadata.")}), 200
+        rows = [f"{key}: {value}" for key, value in result.get("metadata", {}).items()]
+        reply = f"Metadata for {result.get('filename', filename)}:\n" + ("\n".join(rows) if rows else "No supported metadata found.")
+        return jsonify({"reply": reply[:3000]}), 200
+
     visual_b64 = _visual_payload_base64(body)
+
+    if (body.get("sticker") or body.get("is_sticker") or body.get("sticker_data")) and visual_b64:
+        try:
+            return jsonify(_sticker_reply_from_visual(visual_b64, user_phone, sender)), 200
+        except Exception as exc:
+            log.warning("[Sticker] Response generation failed: %s", exc)
+            return jsonify({"reply": "I couldn't read that sticker just now. Can you resend it?"}), 200
 
     # ── WhatsApp Status (Story) Interception ──────────────────────────────────
     if body.get('is_status'):
@@ -1820,10 +1897,13 @@ def route_reply():
     # ── Master Control Overrides ──────────────────────────────────────────────
     if raw_question and raw_question.lower().startswith("master control"):
         profile = profile_mgr.get_profile(user_phone)
-        is_creator = profile.get("is_creator", False)
+        is_creator = is_configured_creator(user_phone, sender_jid)
 
         # ─ Authenticate ───────────────────────────────────────────────────────
         if "master control chela" in raw_question.lower():
+            if not is_creator:
+                log.warning("[Auth] Rejected creator setup phrase from unconfigured identity %s", sender_jid)
+                return jsonify({"reply": "Creator identity is not configured for this account."}), 403
             profile["is_creator"] = True
             profile_mgr.save()
             # Also record owner_jid for system-task alerts (bridge-down, etc.)
@@ -2177,15 +2257,7 @@ def route_reply():
                 if is_group and quoted_author_jid and not is_bot_quoted_flag:
                     # Replying to another user, @mention them
                     reply_text = format_reply_with_mentions(reply_text, quoted_author_jid, quoted_author)
-                reply_payload = {"reply": reply_text}
-                if model_reply.get("image"):
-                    reply_payload["image"] = model_reply["image"]
-                if model_reply.get("sticker"):
-                    reply_payload["sticker"] = model_reply["sticker"]
-                if model_reply.get("audio"):
-                    reply_payload["audio"] = model_reply["audio"]
-                if model_reply.get("video"):
-                    reply_payload["video"] = model_reply["video"]
+                reply_payload = _build_reply_payload(model_reply, reply_text)
                 if body.get("edited") and edit_replace_message_id:
                     reply_payload["edit_mode"] = True
                     reply_payload["replace_message_id"] = edit_replace_message_id
@@ -2396,6 +2468,26 @@ def route_health():
     except Exception as e:
         log.error("[Health] Failed to get status: %s", e)
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/preview/<token>", methods=["GET"])
+def route_temporary_preview(token: str):
+    from services.temporary_apps import get_preview
+
+    html = get_preview(token)
+    if html is None:
+        return Response("Preview expired or not found", status=404, mimetype="text/plain")
+    response = Response(html, mimetype="text/html; charset=utf-8")
+    response.headers["Content-Security-Policy"] = (
+        "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; "
+        "style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; "
+        "font-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; "
+        "form-action 'none'; frame-ancestors 'none'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def start_background_services() -> None:

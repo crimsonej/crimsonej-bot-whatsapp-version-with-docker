@@ -10,22 +10,82 @@ Uses WAL mode for concurrent readers/writers. Single file: crimson.db
 from __future__ import annotations
 
 import json
+import base64
 import os
 import sqlite3
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Iterator, Optional
 
 from core.config import BASE_DIR, TZ, cfg, log
 
-DB_PATH = os.path.join(BASE_DIR, "crimson.db")
+DATA_DIR = os.path.abspath(os.environ.get("DATA_DIR") or BASE_DIR)
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_PATH = os.path.join(DATA_DIR, "crimson.db")
 _SCHEMA_VERSION = 6
 
 _thread_local = threading.local()
 _init_lock = threading.Lock()
 _initialized = False
+
+
+def _restore_database_snapshot() -> None:
+    """Restore the private GitHub SQLite snapshot before creating an empty DB."""
+    if os.path.exists(DB_PATH):
+        return
+    repo = (cfg("github_backup_repo") or os.getenv("GITHUB_BACKUP_REPO") or "").strip()
+    token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+    if not repo or not token:
+        return
+    if repo.startswith("git@github.com:"):
+        repo = repo.split(":", 1)[1]
+    elif "://" in repo:
+        parsed = urllib.parse.urlparse(repo)
+        if parsed.hostname == "github.com":
+            repo = parsed.path
+    repo = repo.removeprefix("github.com/").strip("/").removesuffix(".git")
+    if not repo:
+        return
+
+    url = f"https://api.github.com/repos/{repo}/contents/backup/crimson.db"
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read())
+        raw = base64.b64decode(payload.get("content", ""), validate=True)
+        if not raw:
+            return
+        temp_path = f"{DB_PATH}.restore"
+        with open(temp_path, "wb") as snapshot:
+            snapshot.write(raw)
+        check = sqlite3.connect(temp_path)
+        try:
+            integrity = check.execute("PRAGMA integrity_check").fetchone()
+        finally:
+            check.close()
+        if not integrity or integrity[0] != "ok":
+            os.remove(temp_path)
+            log.error("[Storage] GitHub database snapshot failed integrity check")
+            return
+        os.replace(temp_path, DB_PATH)
+        log.info("[Storage] Restored SQLite snapshot from private GitHub backup (%d bytes)", len(raw))
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            log.warning("[Storage] GitHub database restore failed: HTTP %s", exc.code)
+    except Exception as exc:
+        log.warning("[Storage] GitHub database restore failed: %s", exc)
 
 
 def get_conn() -> sqlite3.Connection:
@@ -536,6 +596,14 @@ def profile_get_context_string(user_id: str) -> str:
     return "\n[USER PROFILE]\n" + "\n".join(parts) + "\n[/USER PROFILE]\n"
 
 
+def profile_get_all() -> dict[str, dict]:
+    """Return every stored profile keyed by user id."""
+    init_db()
+    with transaction() as conn:
+        cur = conn.execute("SELECT * FROM profiles")
+        return {row["user_id"]: _row_to_profile(row) for row in cur.fetchall()}
+
+
 def profile_get_all_known_names() -> dict[str, str]:
     init_db()
     with transaction() as conn:
@@ -912,4 +980,5 @@ def migrate_from_json() -> dict:
 
 
 # Initialize on import
+_restore_database_snapshot()
 init_db()

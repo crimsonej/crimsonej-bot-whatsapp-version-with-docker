@@ -9,7 +9,10 @@ Periodically: pushes local SQLite data to backup repo.
 from __future__ import annotations
 
 import json
+import base64
 import os
+import sqlite3
+import tempfile
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -23,8 +26,10 @@ from services.github_search import (
     _github_api_request,
 )
 from services.storage import (
+    DATA_DIR,
+    session_get,
     session_get_all_active,
-    profile_get_all_known_names,
+    profile_get_all,
     vector_get_all,
     vault_get,
     profile_get,
@@ -48,6 +53,7 @@ _sync_thread: Optional[threading.Thread] = None
 _sync_stop = threading.Event()
 _last_pull_time: float = 0
 _last_push_time: float = 0
+_last_push_stats: Optional[Dict[str, int]] = None
 
 
 def get_backup_repo() -> str:
@@ -91,6 +97,57 @@ def _write_json_file(repo: str, path: str, data: Dict[str, Any], message: str) -
     content = json.dumps(data, indent=2, ensure_ascii=False)
     result = github_upsert_file(repo, path, content, message)
     return result.get("ok", False)
+
+
+def _write_database_snapshot(repo: str) -> bool:
+    """Upload a consistent SQLite snapshot to the private backup repository."""
+    from services.storage import DB_PATH
+
+    if not os.path.isfile(DB_PATH):
+        return False
+    fd, snapshot_path = tempfile.mkstemp(prefix="crimson-backup-", suffix=".db")
+    os.close(fd)
+    try:
+        source = sqlite3.connect(DB_PATH, timeout=30)
+        snapshot = sqlite3.connect(snapshot_path)
+        try:
+            source.backup(snapshot)
+        finally:
+            snapshot.close()
+            source.close()
+        size = os.path.getsize(snapshot_path)
+        if not size or size > 80 * 1024 * 1024:
+            log.error("[GitHubSync] SQLite snapshot size is not supported by Contents API: %d", size)
+            return False
+        with open(snapshot_path, "rb") as database_file:
+            encoded = base64.b64encode(database_file.read()).decode("ascii")
+
+        path = "backup/crimson.db"
+        url = f"https://api.github.com/repos/{repo}/contents/{path}"
+        existing = _github_api_request("GET", url)
+        payload: Dict[str, str] = {
+            "message": f"Backup SQLite database ({size} bytes) - {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            "content": encoded,
+        }
+        if existing.get("ok"):
+            payload["sha"] = existing["data"].get("sha", "")
+        elif "404" not in existing.get("error", "") and "Not Found" not in existing.get("error", ""):
+            log.warning("[GitHubSync] Could not read existing SQLite snapshot: %s", existing.get("error"))
+            return False
+        result = _github_api_request("PUT", url, json=payload)
+        if not result.get("ok"):
+            log.warning("[GitHubSync] SQLite snapshot upload failed: %s", result.get("error"))
+            return False
+        log.info("[GitHubSync] SQLite snapshot uploaded (%d bytes)", size)
+        return True
+    except Exception as exc:
+        log.warning("[GitHubSync] SQLite snapshot failed: %s", exc)
+        return False
+    finally:
+        try:
+            os.remove(snapshot_path)
+        except OSError:
+            pass
 
 
 def pull_from_github() -> Dict[str, int]:
@@ -205,13 +262,9 @@ def push_to_github() -> Dict[str, int]:
     stats = {"profiles": 0, "sessions": 0, "vaults": 0, "vectors": 0, "errors": 0}
 
     # Push profiles
-    profiles_data = {}
-    known_names = profile_get_all_known_names()
-    for user_id in known_names:
-        p = profile_get(user_id)
-        if p:
-            p["_synced_at"] = time.time()
-            profiles_data[user_id] = p
+    profiles_data = profile_get_all()
+    for profile in profiles_data.values():
+        profile["_synced_at"] = time.time()
     if profiles_data:
         ok = _write_json_file(
             repo, BACKUP_PATHS["profiles"], profiles_data,
@@ -219,6 +272,8 @@ def push_to_github() -> Dict[str, int]:
         )
         if ok:
             stats["profiles"] = len(profiles_data)
+        else:
+            stats["errors"] += 1
 
     # Push sessions (only active ones)
     sessions_data = {}
@@ -237,11 +292,13 @@ def push_to_github() -> Dict[str, int]:
         )
         if ok:
             stats["sessions"] = len(sessions_data)
+        else:
+            stats["errors"] += 1
 
     # Push vaults
     vaults_data = {}
     # Personal vaults
-    for user_id in known_names:
+    for user_id in profiles_data:
         content = vault_get(f"user:{user_id}")
         if content:
             vaults_data[f"user:{user_id}"] = content
@@ -256,6 +313,8 @@ def push_to_github() -> Dict[str, int]:
         )
         if ok:
             stats["vaults"] = len(vaults_data)
+        else:
+            stats["errors"] += 1
 
     # Push vectors (limit to recent 5000 to keep repo size manageable)
     vectors = vector_get_all()
@@ -275,6 +334,13 @@ def push_to_github() -> Dict[str, int]:
         )
         if ok:
             stats["vectors"] = len(vectors_data)
+        else:
+            stats["errors"] += 1
+
+    if _write_database_snapshot(repo):
+        stats["database"] = 1
+    else:
+        stats["errors"] += 1
 
     # Push meta
     meta = {
@@ -283,10 +349,12 @@ def push_to_github() -> Dict[str, int]:
         "version": 1,
         "stats": stats,
     }
-    _write_json_file(repo, BACKUP_PATHS["meta"], meta, "Update sync metadata")
+    if not _write_json_file(repo, BACKUP_PATHS["meta"], meta, "Update sync metadata"):
+        stats["errors"] += 1
 
-    global _last_push_time
+    global _last_push_time, _last_push_stats
     _last_push_time = time.time()
+    _last_push_stats = stats.copy()
     log.info("[GitHubSync] Push complete: %s", stats)
     return stats
 
@@ -348,6 +416,9 @@ def get_sync_status() -> Dict[str, Any]:
         "enabled": is_sync_enabled(),
         "repo": get_backup_repo() if is_sync_enabled() else None,
         "running": _sync_thread is not None and _sync_thread.is_alive(),
+        "interval_seconds": int(cfg("github_sync_interval_sec") or 3600),
+        "data_dir_mounted": os.path.ismount(DATA_DIR),
         "last_pull": _last_pull_time,
         "last_push": _last_push_time,
+        "last_push_stats": _last_push_stats.copy() if _last_push_stats else None,
     }

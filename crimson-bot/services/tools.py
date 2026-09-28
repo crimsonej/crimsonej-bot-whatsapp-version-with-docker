@@ -1118,6 +1118,91 @@ DEEP_RESEARCH_TOOL = {
     }
 }
 
+OSINT_INVESTIGATE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "osint_investigate",
+        "description": (
+            "Creator-only passive OSINT using public web sources and tools packaged in the bot container. "
+            "Supports public email mentions and DNS mail records, public username-profile discovery, "
+            "and passive domain/subdomain research. Never use breach dumps, credentials, private records, "
+            "precise personal-location data, or active scanning. Treat matches as unverified leads."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "subject": {"type": "string", "description": "Public email address, username, or domain."},
+                "subject_type": {"type": "string", "enum": ["email", "username", "domain"]},
+            },
+            "required": ["subject", "subject_type"],
+        },
+    },
+}
+
+OSINT_ENVIRONMENT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "check_osint_tools",
+        "description": "Creator-only: list reviewed OSINT utilities available in the bot's current Linux environment. Does not install anything.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+OSINT_INSTALL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "install_osint_tool",
+        "description": (
+            "Creator-only: install a pinned, reviewed OSINT utility inside the bot's Docker environment. "
+            "This only works after the creator's current message is exactly 'approve install sherlock', "
+            "'approve install maigret', or 'approve install theHarvester'. Only the bot container is modified."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tool": {"type": "string", "enum": ["sherlock", "maigret", "theHarvester"]},
+            },
+            "required": ["tool"],
+        },
+    },
+}
+
+PUBLISH_TEMPORARY_APP_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "publish_temporary_web_app",
+        "description": (
+            "Creator-only: build and publish a self-contained static HTML page or React frontend inside the bot container, then return its HTTPS URL. "
+            "React uses the pinned container toolchain. It expires after the requested uptime, at most six hours. Backend/server code and arbitrary dependencies are not supported."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "html": {"type": "string", "description": "Complete self-contained HTML page (1 MiB maximum) when app_type is html."},
+                "app_type": {"type": "string", "enum": ["html", "react"], "description": "Use html for a finished page or react for a JSX component built with the bundled toolchain."},
+                "name": {"type": "string", "description": "Short page title used for React previews."},
+                "jsx": {"type": "string", "description": "React App component source when app_type is react."},
+                "css": {"type": "string", "description": "Optional CSS source for a React preview."},
+                "uptime_hours": {"type": "number", "description": "Requested lifetime, default six hours; hard maximum six."},
+            },
+            "required": [],
+        },
+    },
+}
+
+REVOKE_TEMPORARY_APP_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "revoke_temporary_web_app",
+        "description": "Creator-only: immediately remove one temporary static preview using its token from the URL returned when it was published.",
+        "parameters": {
+            "type": "object",
+            "properties": {"token": {"type": "string", "description": "The random token segment from the preview URL."}},
+            "required": ["token"],
+        },
+    },
+}
+
 BRIDGE_DELETE_MESSAGE_TOOL = {
     "type": "function",
     "function": {
@@ -1186,7 +1271,19 @@ BRIDGE_GET_USER_GROUPS_TOOL = {
     "type": "function",
     "function": {
         "name": "bridge_get_user_groups",
-        "description": "Get all WhatsApp groups the bot is currently a member or admin in, including participant counts and admin status. Use when user asks 'how many groups are you in', 'list your groups', 'how many groups are you admin in'.",
+        "description": "Get all WhatsApp groups the bot is currently a member or admin in, including participant counts, admin status, and JIDs. Use when user asks 'how many groups are you in', 'list your groups', 'how many groups are you admin in'.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    }
+}
+
+GET_DM_CONTACTS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_dm_contacts",
+        "description": "Get a list of all users/contacts who have texted or interacted with the bot directly (DMs), including names, phone numbers/JIDs, interaction counts, and last seen timestamps. Use when user asks 'who has texted you directly?', 'list your contacts', 'did someone message you?'.",
         "parameters": {
             "type": "object",
             "properties": {}
@@ -1438,6 +1535,11 @@ ALL_TOOLS = [
     GITHUB_LIST_FILES_TOOL,
     SUBSCRIBE_NEWS_FEED_TOOL,
     DEEP_RESEARCH_TOOL,
+    OSINT_INVESTIGATE_TOOL,
+    OSINT_ENVIRONMENT_TOOL,
+    OSINT_INSTALL_TOOL,
+    PUBLISH_TEMPORARY_APP_TOOL,
+    REVOKE_TEMPORARY_APP_TOOL,
     RELAY_REQUEST_TOOL,
     MIXUP_ESCALATE_TOOL,
     BRIDGE_DELETE_MESSAGE_TOOL,
@@ -1445,6 +1547,7 @@ ALL_TOOLS = [
     BRIDGE_PIN_MESSAGE_TOOL,
     BRIDGE_UNPIN_MESSAGE_TOOL,
     BRIDGE_GET_USER_GROUPS_TOOL,
+    GET_DM_CONTACTS_TOOL,
     BRIDGE_GET_GROUP_PARTICIPANTS_TOOL,
     BRIDGE_SET_GROUP_SETTINGS_TOOL,
     BRIDGE_LOCK_GROUP_TOOL,
@@ -1495,7 +1598,14 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
             })
             continue
 
-        log.info("[Tool Call] Executing %s with args %s", name, args)
+        logged_args = args
+        if name == "osint_investigate":
+            logged_args = {"subject_type": args.get("subject_type"), "subject": "[redacted]"}
+        elif name == "publish_temporary_web_app":
+            logged_args = {"html_chars": len(str(args.get("html") or "")), "uptime_hours": args.get("uptime_hours", 6)}
+        elif name == "revoke_temporary_web_app":
+            logged_args = {"token": "[redacted]"}
+        log.info("[Tool Call] Executing %s with args %s", name, logged_args)
 
         if name == "web_search":
             # Get optimized params for current environment
@@ -2408,6 +2518,76 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
             res = fetch_rss_feed(feed)
             messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(res)})
 
+        elif name in ("osint_investigate", "check_osint_tools", "install_osint_tool", "publish_temporary_web_app", "revoke_temporary_web_app"):
+            from services.access_control import is_configured_creator, record_restricted_attempt
+            if not is_configured_creator(user_id or "", sender_jid or ""):
+                count = record_restricted_attempt(user_id or "", sender_jid or "", name)
+                refusal = "That operation is restricted to the configured creator account."
+                if count >= 3:
+                    refusal += " Repeated attempts have been reported to the creator."
+                messages.append({
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
+                    "name": name,
+                    "content": json.dumps({"ok": False, "error": "creator_only"}),
+                })
+                return {**tool_results, "reply": refusal}
+            if (sender_jid or "").endswith("@g.us"):
+                result = {"ok": False, "error": "creator_tools_require_direct_chat"}
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(result)})
+                return {**tool_results, "reply": "Use this creator-only operation in a direct chat, not a group."}
+
+            if name == "check_osint_tools":
+                from services.osint import osint_environment
+                available = osint_environment()["tools"]
+                lines = [f"{tool}: {path or 'not installed'}" for tool, path in available.items()]
+                result = {"ok": True, "container_tools": available}
+                reply = "OSINT tools in the bot container:\n" + "\n".join(lines)
+            elif name == "osint_investigate":
+                from services.osint import run_public_osint
+                result = run_public_osint(args.get("subject", ""), args.get("subject_type", ""))
+                reply = result.get("report") or result.get("error") or "No public-source findings returned."
+            elif name == "install_osint_tool":
+                tool_name = args.get("tool", "")
+                approval = f"question: approve install {tool_name}".lower()
+                latest_user_message = next(
+                    (str(item.get("content") or "") for item in reversed(messages) if item.get("role") == "user"),
+                    "",
+                ).strip().lower()
+                if not latest_user_message.endswith(approval):
+                    result = {"ok": False, "error": "explicit_confirmation_required"}
+                    reply = f"No installation was started. To approve this specific tool, send exactly: approve install {tool_name}"
+                else:
+                    from services.osint import install_osint_dependency
+                    result = install_osint_dependency(tool_name)
+                    reply = (
+                        f"Installed {tool_name} in the bot container. It will be available until the next image rebuild."
+                        if result.get("ok") else result.get("error", "Could not install the tool.")
+                    )
+            elif name == "publish_temporary_web_app":
+                from services.temporary_apps import build_and_publish_react_preview, publish_static_preview
+                if args.get("app_type") == "react":
+                    result = build_and_publish_react_preview(
+                        args.get("name", "Temporary app"),
+                        args.get("jsx", ""),
+                        args.get("css", ""),
+                        args.get("uptime_hours", 6),
+                    )
+                else:
+                    result = publish_static_preview(args.get("html", ""), args.get("uptime_hours", 6))
+                reply = (
+                    f"Preview URL: {result['url']}\nExpires in at most {result['ttl_seconds'] // 3600} hour(s)."
+                    if result.get("ok") else result.get("error", "Preview publishing failed.")
+                )
+            else:
+                from services.temporary_apps import revoke_static_preview
+                revoked = revoke_static_preview(args.get("token", ""))
+                result = {"ok": revoked}
+                reply = "Preview removed." if revoked else "That preview is already expired or the token was not found."
+
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(result)})
+            return {**tool_results, "reply": reply}
+
         elif name == "deep_research":
             from services.deep_research import run_deep_research_task
             topic = args.get("topic", "")
@@ -2531,10 +2711,17 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
                             if doc.get("base64"):
                                 latest_doc = doc
                                 break
+                            if doc.get("text"):
+                                latest_doc = doc
                         if latest_doc:
                             document_base64 = latest_doc.get("base64", "")
                             if not filename:
                                 filename = latest_doc.get("name", "document")
+                            if not document_base64 and latest_doc.get("text"):
+                                reply = latest_doc["text"][:30000]
+                                result = {"ok": True, "text": reply, "metadata": {"source": "document session"}}
+                                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(result)})
+                                return {**tool_results, "reply": reply}
                             log.info(f"[Tool] Using document from session: {filename}")
                 except ImportError:
                     pass
@@ -2545,6 +2732,27 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
                 messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name,
                                  "content": json.dumps({"ok": False, "error": "document_base64 or document_url required"})})
             else:
+                local_formats = {
+                    ".pdf": "pdf", ".docx": "docx", ".doc": "docx",
+                    ".pptx": "pptx", ".ppt": "pptx", ".xlsx": "excel",
+                    ".xls": "excel", ".csv": "excel", ".txt": "text", ".md": "text",
+                }
+                expected_format = local_formats.get(os.path.splitext(filename.lower())[1])
+                if document_base64 and expected_format:
+                    from services.doc_reader import extract_document_text
+                    parsed = extract_document_text(document_base64, filename)
+                    if parsed.get("ok") and parsed.get("format") == expected_format and parsed.get("text", "").strip():
+                        reply = parsed["text"][:30000]
+                        result = {
+                            "ok": True,
+                            "text": reply,
+                            "tables": [],
+                            "images": [],
+                            "metadata": {**parsed.get("metadata", {}), "format": parsed.get("format", "")},
+                        }
+                        messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": json.dumps(result)})
+                        return {**tool_results, "reply": reply}
+
                 from services.vision import parse_document_with_nvidia
                 result = parse_document_with_nvidia(
                     document_base64=document_base64,
@@ -2612,12 +2820,32 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
             if res.get("ok"):
                 groups = res.get("groups", [])
                 if groups:
-                    lines = [f"• {g['name']} ({'admin' if g.get('is_admin') else 'member'}) — {g.get('participant_count', 0)} members" for g in groups]
+                    lines = [
+                        f"• {g.get('subject') or g.get('name') or g.get('jid') or 'Unnamed group'} "
+                        f"({'admin' if g.get('is_bot_admin', g.get('is_admin', False)) else 'member'}) "
+                        f"— {g.get('participant_count', 0)} members (JID: {g.get('jid')})"
+                        for g in groups
+                    ]
                     natural = "Groups I'm in:\n" + "\n".join(lines)
                 else:
                     natural = "I'm not in any groups."
             else:
                 natural = f"Failed to get groups: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "get_dm_contacts":
+            from services.storage import profile_get_all
+            profiles = profile_get_all()
+            if profiles:
+                lines = []
+                for uid, p in profiles.items():
+                    name_str = p.get("name") or "Unknown"
+                    count = p.get("interaction_count", 0)
+                    last_seen = (p.get("last_seen") or "")[:19]
+                    lines.append(f"• {name_str} (JID/ID: {uid}) — {count} interactions, last seen: {last_seen}")
+                natural = f"Direct contacts ({len(profiles)} total):\n" + "\n".join(lines)
+            else:
+                natural = "No direct contacts found."
             messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
 
         elif name == "bridge_get_group_participants":
@@ -2844,6 +3072,8 @@ def _enqueue_download_task(tool_name: str, query: str, media_type: str,
     if opt_params is None:
         opt_params = {}
 
+    query = _normalize_media_query(query)
+
     # Direct URL → enqueue background download
     if re.match(r'^https?://', query):
         url_label = query.split("/")[-1][:30] or "from link"
@@ -2859,15 +3089,13 @@ def _enqueue_download_task(tool_name: str, query: str, media_type: str,
                                "owner_jid": sender_jid or "",
                                "owner_user_id": user_id or "",
                                "task_id": "TBD",
-                               "max_size_mb": max_size_mb,
-                               "stream_only": opt_params.get("stream_only", False),
-                               "cleanup_after_send": opt_params.get("cleanup_after_send", False),
-                               "prefer_audio_over_video": opt_params.get("prefer_audio_over_video", False)},
+                               "max_size_mb": max_size_mb},
                      "progress_label": (f"🎬 downloading {url_label}" if media_type == "video"
                                          else f"🎵 downloading {url_label}")},
             owner_user_id=user_id or "",
             owner_jid=sender_jid or "",
-            notify_on="done",
+            notify_on="failed",
+            max_attempts=1,
             metadata={"url": query, "media_type": media_type, "opt_params": opt_params},
         )
         event_log.append("tool", "task_enqueued",
@@ -2903,15 +3131,13 @@ def _enqueue_download_task(tool_name: str, query: str, media_type: str,
                            "owner_jid": sender_jid or "",
                            "owner_user_id": user_id or "",
                            "task_id": "TBD",
-                           "max_size_mb": opt_params.get("max_size_mb", 50),
-                           "stream_only": opt_params.get("stream_only", False),
-                           "cleanup_after_send": opt_params.get("cleanup_after_send", False),
-                           "prefer_audio_over_video": opt_params.get("prefer_audio_over_video", False)},
+                           "max_size_mb": opt_params.get("max_size_mb", 50)},
                  "progress_label": (f"🎬 downloading {title_short}" if media_type == "video"
                                      else f"🎵 downloading {title_short}")},
         owner_user_id=user_id or "",
         owner_jid=sender_jid or "",
-        notify_on="done",
+        notify_on="failed",
+        max_attempts=1,
         metadata={"query": query, "title": chosen.get("title"), "media_type": media_type, "opt_params": opt_params},
     )
     event_log.append("tool", "task_enqueued",
@@ -2943,6 +3169,35 @@ def _format_self_aware(open_tasks: list, recent_done: list, events: list) -> str
         for e in events[-5:]:
             lines.append(f"  - [{e.get('kind')}] {e.get('summary','')[:100]}")
     return "\n".join(lines)
+
+def _format_search_natural(query: str, search_result: dict) -> str:
+    if not isinstance(search_result, dict):
+        return f"I couldn't get reliable search results for {query!r}."
+    if search_result.get("error"):
+        return f"Search failed: {search_result['error']}"
+
+    results = search_result.get("results") or []
+    if not results:
+        return search_result.get("answer") or f"No search results found for {query!r}."
+
+    lines = [search_result.get("answer", "").strip()]
+    lines.extend(
+        f"- {item.get('title', 'Untitled')}: {item.get('content', '').strip()} ({item.get('url', '')})"
+        for item in results[:3]
+    )
+    return "\n".join(line for line in lines if line)
+
+
+def _normalize_media_query(query: str) -> str:
+    if not query or re.match(r"^https?://", query):
+        return query or ""
+    query = re.sub(
+        r"^(?:please\s+)?(?:can you\s+)?(?:send|get|find|download|grab|play)\s+(?:me\s+)?",
+        "", query.strip(), flags=re.I,
+    )
+    query = re.sub(r"\b(?:song|track|audio|music|called|named)\b", " ", query, flags=re.I)
+    return re.sub(r"\s+", " ", query).strip(" .,!?")
+
 
 def _format_search_suggestions(query: str, search_result: dict, tried: list | None = None) -> str:
     """Turn a search result into a confirmation prompt the user can answer.

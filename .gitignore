@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
 dist/
 build/
 .Python

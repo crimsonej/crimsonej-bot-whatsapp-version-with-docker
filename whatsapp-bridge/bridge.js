@@ -830,21 +830,33 @@ async function handleMessage(msg) {
             process = quotedSender === sock.user?.id || quotedSender.split(':')[0].split('@')[0] === botNum || (botLid && quotedSender.split(':')[0].split('@')[0] === botLid);
         }
         if (process) {
-            const buf = await downloadMediaMessage(msg, 'buffer', {}).catch(() => null);
-            if (buf) {
-                try {
-                    await sock.sendPresenceUpdate('composing', from).catch(() => { });
-                    const res = await axios.post(AI_SERVER, {
-                        sticker: true,
-                        sticker_data: buf.toString('base64'),
-                        sticker_mimetype: 'image/webp',
-                        sender: from,
-                        user_phone: userPhone,
-                        is_reply_to_bot: isReplyToBot,
-                        quoted_author: quotedSender
-                    });
-                    await sendAIResponse(msg, from, res, quotedFake, quotedSender);
-                } catch (e) { console.error('[Sticker]', e.message); }
+            const buf = await downloadMediaMessage(msg, 'buffer', {}).catch(e => {
+                console.error('[Sticker] Media download failed:', e.message);
+                return null;
+            });
+            if (!buf) {
+                await instrumentedSend(from, {
+                    text: "I couldn't read that sticker just now. Can you resend it?"
+                }, { quoted: msg }).catch(e => console.error('[Sticker] Fallback reply failed:', e.message));
+                return;
+            }
+            try {
+                await sock.sendPresenceUpdate('composing', from).catch(() => { });
+                const res = await axios.post(AI_SERVER, {
+                    sticker: true,
+                    sticker_data: buf.toString('base64'),
+                    sticker_mimetype: 'image/webp',
+                    sender: from,
+                    user_phone: userPhone,
+                    is_reply_to_bot: isReplyToBot,
+                    quoted_author: quotedSender
+                });
+                await sendAIResponse(msg, from, res, quotedFake, quotedSender);
+            } catch (e) {
+                console.error('[Sticker]', e.message);
+                await instrumentedSend(from, {
+                    text: "I couldn't read that sticker just now. Can you resend it?"
+                }, { quoted: msg }).catch(sendError => console.error('[Sticker] Fallback reply failed:', sendError.message));
             }
         }
         return;
@@ -1160,16 +1172,26 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
         return res;
     };
 
-    // Send file attachments
+    // Send file attachments and preserve failures so the text reply stays truthful.
+    let attachmentSendFailed = false;
     const sendFile = async (filePath, type, filename) => {
-        if (!filePath || !fs.existsSync(filePath)) return;
+        if (!filePath || !fs.existsSync(filePath)) {
+            attachmentSendFailed = true;
+            console.error(`[${type}] attachment file missing:`, filePath || '(empty path)');
+            return false;
+        }
         try {
             const buf = fs.readFileSync(filePath);
             if (type === 'audio') await trackedSend(sendJid, { audio: buf, mimetype: 'audio/ogg; codecs=opus', ptt: data.ptt || false });
             else if (type === 'video') await trackedSend(sendJid, { video: buf, mimetype: 'video/mp4', fileName: filename || 'video.mp4', caption: '🎬' });
             else if (type === 'image') await trackedSend(sendJid, { image: buf, caption: filename || '' });
             fs.unlink(filePath, () => { });
-        } catch (e) { console.error(`[${type}]`, e.message); }
+            return true;
+        } catch (e) {
+            attachmentSendFailed = true;
+            console.error(`[${type}]`, e.message);
+            return false;
+        }
     };
 
     // Support both lists (new engine) and single strings (legacy commands)
@@ -1201,6 +1223,7 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
             const buf = Buffer.from(b64, 'base64');
             await trackedSend(sendJid, { image: buf, caption: data.filename || '' });
         } catch (e) {
+            attachmentSendFailed = true;
             console.error('[Image send b64]', e.message);
         }
     }
@@ -1222,11 +1245,19 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
             fs.unlink(data.file_path, () => { });
             console.log(`[DocCreate] Sent ${fname} to ${sendJid.split('@')[0]}`);
         } catch (e) {
+            attachmentSendFailed = true;
             console.error('[DocCreate] send error:', e.message);
         }
+    } else if (data.file_path) {
+        attachmentSendFailed = true;
+        console.error('[DocCreate] attachment file missing:', data.file_path);
     } else if (data.document_list && Array.isArray(data.document_list)) {
         for (const docEntry of data.document_list) {
-            if (!docEntry.path || !fs.existsSync(docEntry.path)) continue;
+            if (!docEntry.path || !fs.existsSync(docEntry.path)) {
+                attachmentSendFailed = true;
+                console.error('[DocCreate] attachment file missing:', docEntry.path || '(empty path)');
+                continue;
+            }
             try {
                 const buf = fs.readFileSync(docEntry.path);
                 const fname = docEntry.filename || 'document';
@@ -1242,6 +1273,7 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
                 fs.unlink(docEntry.path, () => { });
                 console.log(`[DocCreate] Sent ${fname} to ${sendJid.split('@')[0]}`);
             } catch (e) {
+                attachmentSendFailed = true;
                 console.error('[DocCreate] send error:', e.message);
             }
         }
@@ -1254,7 +1286,10 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
                 const buf = fs.existsSync(stk) ? fs.readFileSync(stk) : Buffer.from(stk, 'base64');
                 const quotedObj = (data.reply_to_quoted && quotedFake) ? quotedFake : originalMsg;
                 await trackedSend(sendJid, { sticker: buf }, { quoted: quotedObj });
-            } catch (e) { console.error('[Sticker list send]', e.message); }
+            } catch (e) {
+                attachmentSendFailed = true;
+                console.error('[Sticker list send]', e.message);
+            }
         }
     } else if (data.sticker) {
         try {
@@ -1263,10 +1298,19 @@ async function sendAIResponse(originalMsg, from, response, quotedFake, quotedAut
                 : Buffer.from(data.sticker, 'base64');
             const quotedObj = (data.reply_to_quoted && quotedFake) ? quotedFake : originalMsg;
             await trackedSend(sendJid, { sticker: buf }, { quoted: quotedObj });
-        } catch (e) { console.error('[Sticker send]', e.message); }
+        } catch (e) {
+            attachmentSendFailed = true;
+            console.error('[Sticker send]', e.message);
+        }
+    }
 
-        // Send text reply (or in-place edit of a previous bot message)
-    } else if (data.reply || (data.edit_mode && data.replace_message_id)) {
+    if (attachmentSendFailed) {
+        data.reply = "The attachment was created, but WhatsApp couldn't deliver it. Ask me to try again.";
+        console.error(`[ATTACHMENT] delivery failed for ${sendJid.split('@')[0]}`);
+    }
+
+    // Send text reply (or in-place edit of a previous bot message)
+    if (data.reply || (data.edit_mode && data.replace_message_id)) {
 
         if (data.edit_mode && data.replace_message_id) {
             const finalText = data.reply || '...';
@@ -1344,7 +1388,8 @@ const http = require('http');
 http.createServer((req, res) => {
     req.setTimeout(300000);
     res.setTimeout(300000);
-    if (req.url !== '/health/full' && !authorized(req)) {
+    const previewRequest = req.method === 'GET' && /^\/preview\/[A-Za-z0-9_-]{32,64}$/.test(req.url || '');
+    if (req.url !== '/health/full' && !previewRequest && !authorized(req)) {
         res.writeHead(API_TOKEN ? 401 : 503, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: false, error: API_TOKEN ? 'unauthorized' : 'bridge_api_token_not_configured' }));
     }
@@ -1360,6 +1405,23 @@ http.createServer((req, res) => {
     if (rate.count > RATE_LIMIT) {
         res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
         return res.end(JSON.stringify({ ok: false, error: 'rate_limited' }));
+    }
+    if (previewRequest) {
+        axios.get(`http://127.0.0.1:5000${req.url}`, { responseType: 'stream', timeout: 10000 })
+            .then(upstream => {
+                const headers = { 'Content-Type': upstream.headers['content-type'] || 'text/html; charset=utf-8' };
+                for (const name of ['content-security-policy', 'x-content-type-options', 'referrer-policy', 'cache-control']) {
+                    if (upstream.headers[name]) headers[name] = upstream.headers[name];
+                }
+                res.writeHead(upstream.status, headers);
+                upstream.data.pipe(res);
+            })
+            .catch(error => {
+                const status = error.response?.status || 502;
+                res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+                res.end(status === 404 ? 'Preview expired or not found' : 'Preview service unavailable');
+            });
+        return;
     }
     const declaredLength = Number(req.headers['content-length'] || 0);
     if (declaredLength > MAX_REQUEST_BYTES) {
@@ -1727,6 +1789,24 @@ http.createServer((req, res) => {
         return;
     }
 
+async function resolveGroupJidInBridge(identifier) {
+    if (!identifier || typeof identifier !== 'string' || identifier.endsWith('@g.us')) return identifier;
+    try {
+        if (!sock) return identifier;
+        const groupsDict = await sock.groupFetchAllParticipating();
+        const lower = identifier.toLowerCase().trim();
+        for (const [jid, meta] of Object.entries(groupsDict)) {
+            const subj = (meta.subject || '').toLowerCase().trim();
+            if (subj === lower || subj.includes(lower) || lower.includes(subj)) {
+                return jid;
+            }
+        }
+    } catch (e) {
+        console.error('[BRIDGE] resolveGroupJidInBridge error:', e.message);
+    }
+    return identifier;
+}
+
     if (req.method === 'POST' && req.url === '/group_setting') {
         let body = '';
         req.on('data', chunk => body += chunk.toString());
@@ -1737,10 +1817,15 @@ http.createServer((req, res) => {
                     res.writeHead(503, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
                 }
-                const targetJids = jids || (jid ? [jid] : []);
-                if (!targetJids.length || !setting) {
+                const rawJids = jids || (jid ? [jid] : []);
+                if (!rawJids.length || !setting) {
                     res.writeHead(400, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify({ ok: false, error: 'missing_jid_or_setting' }));
+                }
+
+                const targetJids = [];
+                for (const rj of rawJids) {
+                    targetJids.push(await resolveGroupJidInBridge(rj));
                 }
 
                 // setting: 'announcement' (lock sending) | 'not_announcement' (unlock sending) | 'locked' (lock edit info) | 'unlocked' (unlock edit info)
@@ -1769,6 +1854,80 @@ http.createServer((req, res) => {
                 console.error('[API] /group_setting error:', e.message);
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ ok: false, error: e.message }));
+            }
+        });
+        return;
+    }
+
+    if (req.method === 'POST' && req.url === '/group_participants') {
+        let body = '';
+        req.on('data', chunk => body += chunk.toString());
+        req.on('end', async () => {
+            try {
+                const { jid } = JSON.parse(body);
+                if (!sock) {
+                    res.writeHead(503, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
+                }
+                if (!jid || !jid.endsWith('@g.us') || !isValidWhatsAppJid(jid)) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'invalid_group_jid' }));
+                }
+                const meta = await sock.groupMetadata(jid);
+                const participants = (meta.participants || []).map(p => ({
+                    jid: p.id || p.jid,
+                    name: p.name || p.notify || '',
+                    admin: p.admin || null,
+                    is_admin: !!p.admin,
+                }));
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ ok: true, jid, participants }));
+            } catch (e) {
+                console.error('[API] /group_participants error:', e.message);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ ok: false, error: e.message }));
+            }
+        });
+        return;
+    }
+
+    if (req.method === 'POST' && req.url === '/group_admin_action') {
+        let body = '';
+        req.on('data', chunk => body += chunk.toString());
+        req.on('end', async () => {
+            try {
+                const { jid, action, target } = JSON.parse(body);
+                if (!sock) {
+                    res.writeHead(503, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'bridge_not_connected' }));
+                }
+                if (!jid || !action) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ ok: false, error: 'missing_jid_or_action' }));
+                }
+                const normalizedAction = String(action).toLowerCase();
+                if (normalizedAction === 'ban') {
+                    if (!target) throw new Error('missing_target_for_ban');
+                    await sock.groupParticipantsUpdate(jid, [target], 'remove');
+                } else if (normalizedAction === 'unban') {
+                    if (!target) throw new Error('missing_target_for_unban');
+                    await sock.groupParticipantsUpdate(jid, [target], 'add');
+                } else if (normalizedAction === 'mute') {
+                    await sock.groupSettingUpdate(jid, 'announcement');
+                } else if (normalizedAction === 'unmute') {
+                    await sock.groupSettingUpdate(jid, 'not_announcement');
+                } else if (normalizedAction === 'promote' || normalizedAction === 'demote') {
+                    if (!target) throw new Error(`missing_target_for_${normalizedAction}`);
+                    await sock.groupParticipantsUpdate(jid, [target], normalizedAction);
+                } else {
+                    throw new Error(`unsupported_action:${action}`);
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ ok: true, jid, action: normalizedAction, target: target || null }));
+            } catch (e) {
+                console.error('[API] /group_admin_action error:', e.message);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ ok: false, error: e.message }));
             }
         });
         return;

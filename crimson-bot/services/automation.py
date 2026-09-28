@@ -113,18 +113,28 @@ class AutomationEngine:
             for row in cur.fetchall():
                 msg_id, jid, text, media_path, media_type, filename, scheduled_at = row
                 
-                # Send the message
-                from services.bridge_api import bridge_send
-                result = bridge_send(jid, text, media_path=media_path, media_type=media_type, filename=filename)
-                
-                if result.get("ok"):
-                    # Mark as sent
-                    conn.execute("UPDATE scheduled_messages SET status = 'sent', sent_at = ? WHERE id = ?", (time.time(), msg_id))
-                    log.info("[Automation] Sent scheduled message %s to %s", msg_id, jid)
+                if media_type == "system_action" or media_path == "ACTION:UNLOCK_GROUP":
+                    from services.bridge_api import bridge_group_setting
+                    result = bridge_group_setting(jid, "not_announcement")
+                    if result.get("ok"):
+                        conn.execute("UPDATE scheduled_messages SET status = 'sent', sent_at = ? WHERE id = ?", (time.time(), msg_id))
+                        log.info("[Automation] System action (unlock group) executed for %s", jid)
+                    else:
+                        conn.execute("UPDATE scheduled_messages SET status = 'failed', error = ? WHERE id = ?", (result.get("error", "unknown"), msg_id))
+                        log.warning("[Automation] System action (unlock group) failed for %s: %s", jid, result.get("error"))
                 else:
-                    # Mark as failed, allow retry
-                    conn.execute("UPDATE scheduled_messages SET status = 'failed', error = ? WHERE id = ?", (result.get("error", "unknown"), msg_id))
-                    log.warning("[Automation] Failed to send scheduled message %s: %s", msg_id, result.get("error"))
+                    # Send the normal message
+                    from services.bridge_api import bridge_send
+                    result = bridge_send(jid, text, media_path=media_path, media_type=media_type, filename=filename)
+                    
+                    if result.get("ok"):
+                        # Mark as sent
+                        conn.execute("UPDATE scheduled_messages SET status = 'sent', sent_at = ? WHERE id = ?", (time.time(), msg_id))
+                        log.info("[Automation] Sent scheduled message %s to %s", msg_id, jid)
+                    else:
+                        # Mark as failed, allow retry
+                        conn.execute("UPDATE scheduled_messages SET status = 'failed', error = ? WHERE id = ?", (result.get("error", "unknown"), msg_id))
+                        log.warning("[Automation] Failed to send scheduled message %s: %s", msg_id, result.get("error"))
             
             conn.commit()
         except Exception as e:

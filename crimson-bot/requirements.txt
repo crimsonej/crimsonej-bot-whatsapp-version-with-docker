@@ -47,6 +47,12 @@ pytest
 typeguard
 anyio
 playwright
+sherlock-project==0.15.0
+maigret==0.6.1
+git+https://github.com/laramies/theHarvester.git@4.11.1#egg=theHarvester
+sherlock-project==0.15.0
+maigret==0.6.1
+theHarvester==4.11.1
 groq
 huggingface-hub
 aiohttp

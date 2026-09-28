@@ -23,7 +23,7 @@ from services.memory import profile_mgr
 # ─── Persistent Feedback State ────────────────────────────────────────────────
 
 _FEEDBACK_FILE = os.path.join(BASE_DIR, "feedback_state.json")
-_feedback_lock = threading.Lock()
+_feedback_lock = threading.RLock()
 _feedback_state: dict[str, dict] = {}  # user_id -> {positive, negative, patterns, last_updated}
 
 def _load_feedback() -> None:

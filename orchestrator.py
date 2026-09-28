@@ -24,13 +24,27 @@ BRIDGE_PID_FILE = os.path.join(ROOT_DIR, ".bridge.pid")
 BOT_LOG_FILE = os.path.join(ROOT_DIR, "bot.log")
 BRIDGE_LOG_FILE = os.path.join(ROOT_DIR, "bridge.log")
 
+def _is_process_zombie(pid: int) -> bool:
+    try:
+        with open(f"/proc/{pid}/stat", "r") as f:
+            stat = f.read()
+        fields = stat.rpartition(")")[2].split()
+        return bool(fields and fields[0] == "Z")
+    except (OSError, IndexError):
+        return False
+
 def get_pid(file_path: str) -> int | None:
     if os.path.exists(file_path):
         try:
             with open(file_path, "r") as f:
                 pid = int(f.read().strip())
-            # Check if process is still running
             os.kill(pid, 0)
+            if _is_process_zombie(pid):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+                return None
             return pid
         except (ValueError, OSError):
             if os.path.exists(file_path):
