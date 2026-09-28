@@ -1,7 +1,7 @@
 # Unified Dockerfile for Crimsonej (Python AI Engine + Node.js WhatsApp Bridge)
 FROM python:3.12-slim
 
-# Install Node.js 20, FFmpeg, fonts, OCR, PDF tools, LibreOffice, ImageMagick, WebP, Chromium, media tools, and system dependencies
+# Install base system dependencies (lightweight)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         wget \
@@ -11,16 +11,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         git \
         procps \
-        build-essential \
         libffi-dev \
         libssl-dev \
-        fonts-liberation \
         fontconfig \
+        poppler-utils \
+        sqlite3 \
+        zip \
+        unzip \
+        tar \
+        gzip \
+        bzip2 \
+        xz-utils \
+        jq \
+        net-tools \
+        iputils-ping \
+        bind9-dnsutils \
+        htop \
+        tree \
+        psmisc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install fonts (needed for PDF/OCR rendering)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        fonts-liberation \
         fonts-dejavu-core \
         fonts-freefont-ttf \
         fonts-noto-color-emoji \
         fonts-roboto \
-        poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install OCR (Tesseract) - core + essential languages only
+RUN apt-get update && apt-get install -y --no-install-recommends \
         tesseract-ocr \
         tesseract-ocr-eng \
         tesseract-ocr-fra \
@@ -31,51 +52,54 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tesseract-ocr-ara \
         tesseract-ocr-rus \
         tesseract-ocr-por \
-        tesseract-ocr-ita \
-        tesseract-ocr-hin \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install document processing (LibreOffice headless - heavy, split separately)
+RUN apt-get update && apt-get install -y --no-install-recommends \
         libreoffice-writer \
         libreoffice-calc \
         libreoffice-impress \
         libreoffice-java-common \
         pandoc \
         graphviz \
-        sqlite3 \
-        zip \
-        unzip \
-        tar \
-        gzip \
-        bzip2 \
-        xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install image/media processing
+RUN apt-get update && apt-get install -y --no-install-recommends \
         imagemagick \
         graphicsmagick \
         webp \
         libwebp-dev \
         ghostscript \
+        libimage-exiftool-perl \
+        mediainfo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install audio processing (optional - can remove if not needed)
+RUN apt-get update && apt-get install -y --no-install-recommends \
         sox \
         libsox-fmt-all \
         flac \
         lame \
         vorbis-tools \
         opus-tools \
-        libimage-exiftool-perl \
-        mediainfo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Chromium for Puppeteer (heavy - separate layer)
+RUN apt-get update && apt-get install -y --no-install-recommends \
         chromium \
         chromium-driver \
         xvfb \
-        jq \
-        net-tools \
-        iputils-ping \
-        bind9-dnsutils \
-        nmap \
-        whois \
-        redis-server \
-        htop \
-        tree \
-        psmisc \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && (sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml || true) \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Fix ImageMagick PDF policy
+RUN (sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml 2>/dev/null || \
+    sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml 2>/dev/null || true)
 
 RUN curl -fsSL -o /tmp/amass.zip https://github.com/owasp-amass/amass/releases/download/v4.1.0/amass_Linux_amd64.zip \
     && echo "a5cbbccf1b4a7493f36eb7b51beb19c77a8ac044a4edfb2a5f13d6a00601eb29  /tmp/amass.zip" | sha256sum -c - \
