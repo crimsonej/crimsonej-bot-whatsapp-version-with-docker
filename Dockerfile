@@ -123,11 +123,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 WORKDIR /app/whatsapp-bridge
 RUN npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund
 
-# Pinned client-side React/Vite toolchain for temporary web-app previews.
-WORKDIR /app/preview-runtime
-COPY preview-runtime/package.json ./package.json
-RUN npm install --omit=dev --no-audit --no-fund
-
 # Copy entire application codebase
 WORKDIR /app
 COPY . /app/
