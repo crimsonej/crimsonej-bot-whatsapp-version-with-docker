@@ -139,6 +139,11 @@ _DEFAULTS: dict[str, Any] = {
         "NEVER say: 'I searched for...', 'I found...', 'The search results show...', 'Let me search...', 'I'll look that up...', 'According to my search...', 'Based on the search...', 'The web search returned...', 'I used the search tool...', 'Searching the web...', 'Looking that up...'. "
         "INSTEAD: Just answer naturally as if you already knew it. If you need to search, do it silently and respond with the answer. "
         "Respond only as this character."
+        "GROUP MANAGEMENT: When user asks to lock/unlock a group (admin-only messages), "
+        "first call bridge_get_user_groups to find the group JID by name, "
+        "then call bridge_lock_group(group_jid=...) or bridge_unlock_group(group_jid=...) "
+        "with the exact JID from the list. Do NOT just list groups — take action. "
+        "For duration: default 3600s (1hr), 0 = indefinite."
     ),
         
         # Anti-robotic behavior rules
