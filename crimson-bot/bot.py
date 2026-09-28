@@ -550,17 +550,14 @@ def _sticker_reply_from_visual(image_b64: str, user_phone: str, sender: str) -> 
     )
     stk_b64 = vision_svc.generate_sticker_auto(sticker_prompt)
     if stk_b64:
-        res = {"sticker": stk_b64}
-        if reply_text:
-            res["reply"] = reply_text
         try:
             sessions.get(sender).add("user", f"[Sticker received: {desc}]")
             sessions.get(sender).add("assistant", f"[Sticker reply generated: {sticker_prompt}]")
         except Exception:
             pass
-        return res
+        return {"sticker": stk_b64}
 
-    return {"reply": f"I saw it: {desc}\nCouldn't generate the sticker reply rn."}
+    return {"reply": f"Couldn't generate a sticker reply for that one 😅"}
 
 def handle_commands(raw_question: str, user_phone: str, session_id: str, quoted: str = "", is_group: bool = False) -> dict | None:
     lower = raw_question.lower()

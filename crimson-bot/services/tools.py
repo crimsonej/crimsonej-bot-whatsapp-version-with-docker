@@ -1353,6 +1353,23 @@ BRIDGE_UNLOCK_GROUP_TOOL = {
     }
 }
 
+BRIDGE_GROUP_ADMIN_ACTION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bridge_group_admin_action",
+        "description": "Perform admin actions in a WhatsApp group: promote, demote, ban, unban, mute, unmute. Requires bot to be admin.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "group_jid": {"type": "string", "description": "Group JID"},
+                "action": {"type": "string", "enum": ["promote", "demote", "ban", "unban", "mute", "unmute"], "description": "Admin action to perform"},
+                "target_jid": {"type": "string", "description": "Target user JID (required for promote, demote, ban, unban)"}
+            },
+            "required": ["group_jid", "action"]
+        }
+    }
+}
+
 BRIDGE_SEND_DOCUMENT_TOOL = {
     "type": "function",
     "function": {
@@ -1552,6 +1569,7 @@ ALL_TOOLS = [
     BRIDGE_SET_GROUP_SETTINGS_TOOL,
     BRIDGE_LOCK_GROUP_TOOL,
     BRIDGE_UNLOCK_GROUP_TOOL,
+    BRIDGE_GROUP_ADMIN_ACTION_TOOL,
     BRIDGE_SEND_DOCUMENT_TOOL,
     BRIDGE_GET_MESSAGE_TOOL,
     BRIDGE_SEARCH_MESSAGES_TOOL,
@@ -2894,6 +2912,18 @@ def execute_tool_calls(tool_calls, messages, user_id, sender_jid=None, media_ser
                 natural = "Group unlocked 🔓"
             else:
                 natural = f"Failed to unlock: {res.get('error', 'unknown error')}"
+            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
+
+        elif name == "bridge_group_admin_action":
+            group_jid = args.get("group_jid", "")
+            action = args.get("action", "")
+            target_jid = args.get("target_jid")
+            from services.bridge_api import bridge_group_admin_action
+            res = bridge_group_admin_action(group_jid, action, target_jid)
+            if res.get("ok"):
+                natural = f"Group {action} done ✅"
+            else:
+                natural = f"Failed to {action}: {res.get('error', 'unknown error')}"
             messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": name, "content": natural})
 
         elif name == "bridge_send_document":

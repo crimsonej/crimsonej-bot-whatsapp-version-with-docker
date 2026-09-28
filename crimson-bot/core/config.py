@@ -144,6 +144,11 @@ _DEFAULTS: dict[str, Any] = {
         "then call bridge_lock_group(group_jid=...) or bridge_unlock_group(group_jid=...) "
         "with the exact JID from the list. Do NOT just list groups — take action. "
         "For duration: default 3600s (1hr), 0 = indefinite."
+        "GROUP ADMIN ACTIONS: For promote/demote/ban/unban/mute/unmute — call bridge_group_admin_action(group_jid=..., action=..., target_jid=...). "
+        "STATUS POSTING: To post a WhatsApp status, call post_status(text=..., media_base64=..., mimetype=...). "
+        "STICKER REPLIES: When user sends a sticker, respond with a matching sticker ONLY — no text. "
+        "React naturally to the sticker's mood (slap → slap back, laugh → laugh, etc.). "
+        "Never describe the sticker — just reply with an appropriate sticker."
     ),
         
         # Anti-robotic behavior rules

@@ -24,6 +24,28 @@ from core.config import log
 LAST_DL_ERROR = "No downloads attempted yet"
 CF_WORKER_URL = os.environ.get("CF_WORKER_URL", "")
 _COOKIE_TEMP_FILES: set[str] = set()
+_YTDLP_UPDATED = False
+
+
+def _maybe_update_ytdlp() -> None:
+    """Auto-update yt-dlp before download to get latest extractors and fixes."""
+    global _YTDLP_UPDATED
+    if _YTDLP_UPDATED:
+        return
+    try:
+        log.info("[Media] Auto-updating yt-dlp...")
+        subprocess.run(
+            ["pip", "install", "--no-cache-dir", "-U", "yt-dlp"],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        _YTDLP_UPDATED = True
+        log.info("[Media] yt-dlp updated successfully")
+    except subprocess.TimeoutExpired:
+        log.warning("[Media] yt-dlp update timed out, continuing with current version")
+    except Exception as e:
+        log.warning("[Media] yt-dlp update failed: %s, continuing with current version", e)
 
 
 def _cleanup_cookie_temp_files() -> None:
@@ -443,6 +465,9 @@ def download_youtube_sync(url: str, media_type: str = "audio", retries: int = 2,
     os.makedirs(temp_dir, exist_ok=True)
     prefix = f"song_{temp_id}---"
     out_template = os.path.join(temp_dir, f"{prefix}%(title)s.%(ext)s")
+
+    # Auto-update yt-dlp to get latest extractors and cookie handling
+    _maybe_update_ytdlp()
 
     common_opts = [
         "yt-dlp", "--force-ipv4", "--no-playlist", "--ignore-errors",
