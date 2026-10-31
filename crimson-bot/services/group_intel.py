@@ -221,6 +221,14 @@ def get_member_group_ids(user_id: str) -> list[str]:
                 if user_id in state.get("observed_members", [])]
 
 
+def forget_group_member(group_jid: str, user_id: str) -> None:
+    """Revoke direct-chat recall after an observed leave event."""
+    with _group_lock:
+        state = _group_state.get(group_jid, {})
+        state["observed_members"] = [uid for uid in state.get("observed_members", []) if uid != user_id]
+        _save_group_state()
+
+
 def set_group_silent(group_jid: str, silent: bool = True) -> None:
     """Toggle silent mode for a group (bot will not talk to anyone in the group)."""
     update_group_context(group_jid, silent_mode=bool(silent))
@@ -581,10 +589,10 @@ def get_group_vault_context(group_jid: str) -> str:
 def get_member_shared_group_context(user_id: str) -> str:
     """Expose explicit shared group facts to a known participant in their DM."""
     sections = []
-    for group_jid in get_member_group_ids(user_id):
+    for group_jid in get_member_group_ids(user_id)[:3]:
         context = get_group_vault_context(group_jid)
         if context:
-            sections.append(context.replace("GROUP MEMORY VAULT", "SHARED GROUP MEMORY"))
+            sections.append(context.replace("GROUP MEMORY VAULT", "SHARED GROUP MEMORY")[-3000:])
     if not sections:
         return ""
     return "\n[GROUP FACTS YOU MAY RECALL PRIVATELY]\n" + "\n".join(sections[:10])

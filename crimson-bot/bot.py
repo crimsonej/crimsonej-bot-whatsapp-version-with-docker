@@ -72,6 +72,7 @@ from services.group_intel import (
     get_group_vault_context,
     get_member_shared_group_context,
     remember_group_member,
+    forget_group_member,
     learn_group_fact,
     get_group_vault_raw,
     clear_group_vault,
@@ -329,8 +330,9 @@ class Index:
             self.vecs, self.idf = _build_tfidf(corpus)
         self.save()
 
-    def search(self, query: str, k: int | None = None, user_id: str | None = None, group_id: str | None = None) -> tuple[list[str], float]:
-        """Search the index. If `user_id` or `group_id` provided, prefer matching chunks.
+    def search(self, query: str, k: int | None = None, user_id: str | None = None,
+               group_id: str | None = None, allowed_group_ids: set[str] | None = None) -> tuple[list[str], float]:
+        """Search only knowledge visible to this user in this conversation.
 
         Returns (chunks_texts, best_score).
         """
@@ -348,10 +350,16 @@ class Index:
             meta = self.chunks[i] if i < len(self.chunks) else {}
             owner = (meta.get("owner") if isinstance(meta, dict) else "") or ""
             group = (meta.get("group") if isinstance(meta, dict) else "") or ""
+            # Personal material must never be surfaced in a group, including to
+            # its owner. Group rooms are shared audiences.
+            if group_id and owner:
+                continue
             if user_id and owner and owner != user_id:
                 # skip chunks owned by other users
                 continue
             if group_id and group and group != group_id:
+                continue
+            if not group_id and group and group not in (allowed_group_ids or set()):
                 continue
             filtered.append((s, i))
 
@@ -1251,7 +1259,14 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
     profile = profile_mgr.get_profile(user_id)
     is_creator = profile.get("is_creator", False) if profile else False
 
-    chunks, best_score = index.search(question, user_id=user_id, group_id=(sender if is_group else None))
+    allowed_group_ids = set()
+    if not is_group:
+        from services.group_intel import get_member_group_ids
+        allowed_group_ids = set(get_member_group_ids(user_id))
+    chunks, best_score = index.search(
+        question, user_id=user_id, group_id=(sender if is_group else None),
+        allowed_group_ids=allowed_group_ids,
+    )
     threshold = cfg("relevance_threshold")
     # Creator bypasses RAG relevance threshold
     if is_creator or best_score >= threshold:
@@ -1850,6 +1865,9 @@ def route_reply():
             if welcome:
                 return jsonify({"reply": welcome}), 200
         else:
+            if not is_bot:
+                departed_user_id = re.sub(r"\D", "", str(event_user_jid or ""))
+                forget_group_member(event_group_jid, departed_user_id)
             handle_group_leave(event_group_jid, event_user_jid, event_user_name)
             return jsonify({"reply": ""}), 200
 
