@@ -24,6 +24,7 @@
   "active_model": "nvidia/nemotron-3-super-120b-a12b",
   "port": 5000,
   "owner_jid": "123456789012@s.whatsapp.net",
+  "proactive_messages_enabled": true,
   "relevance_threshold": 0.03,
   "session_ttl": 7200,
   "session_max_turns": 20,

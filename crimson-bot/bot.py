@@ -70,6 +70,8 @@ from services.group_intel import (
     extract_mentions_from_text,
     format_reply_with_mentions,
     get_group_vault_context,
+    get_member_shared_group_context,
+    remember_group_member,
     learn_group_fact,
     get_group_vault_raw,
     clear_group_vault,
@@ -1300,9 +1302,29 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
     system_prompt += build_personality_prompt(user_id, question, personality_context, session_key)
 
     # ── Per-user profile context (name, facts, interests, familiarity) ────────
+    # Private profile facts/preferences never enter a group prompt.
     user_context = profile_mgr.get_context_string(user_id)
+    if is_group:
+        speaker_profile = profile_mgr.get_profile(user_id)
+        prefs = speaker_profile.get("preferences") or {}
+        safe_preferences = {
+            key: value for key, value in prefs.items()
+            if key in {"response_style", "verbosity", "emoji_preference", "language", "likes_lists"}
+        }
+        user_context = "\n[KNOWN SPEAKER]\n"
+        if speaker_profile.get("name"):
+            user_context += f"Name: {speaker_profile['name']}\n"
+        if safe_preferences:
+            user_context += f"Response preferences: {safe_preferences}\n"
     if user_context:
         system_prompt += user_context
+    system_prompt += (
+        "\n[MEMORY AND CONTINUITY]\n"
+        "Use saved profile facts and conversation summaries only when relevant. Treat them as fallible notes, "
+        "not a complete record. Never invent a shared memory or imply certainty when the notes are unclear. "
+        "If a remembered detail matters and may be outdated, ask naturally whether it is still true. "
+        "Carry open topics forward when the user returns to them; do not force a callback into unrelated chats.\n"
+    )
 
     if is_creator:
         system_prompt += "\n\n[CREATOR ACCESS: You are talking to your creator and father, Elijah. You must be respectful, friendly, and helpful. You can refer to him as 'Dad' or 'Elijah'.]\n"
@@ -1320,13 +1342,24 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
         group_vault = get_group_vault_context(sender)
         if group_vault:
             system_prompt += group_vault
+        system_prompt += (
+            "\n[GROUP PRIVACY]\n"
+            "This reply will be visible to the group. Never reveal private facts, preferences, personal plans, "
+            "private messages, or owner-only information about any person. Group memory contains only facts "
+            "explicitly shared for this group. If a request needs private context, say briefly that it is better "
+            "handled in a direct chat; do not send a DM or disclose it to another participant.\n"
+        )
+    else:
+        shared_group_context = get_member_shared_group_context(user_id)
+        if shared_group_context:
+            system_prompt += shared_group_context
 
-    user_vault = get_vault_context(user_id)
+    user_vault = get_vault_context(user_id, include_personal=not is_group)
     if user_vault:
         system_prompt += user_vault
     
     # ── Cross-session & summary memory ──────────────────────────────────────────
-    cross_session = get_cross_session_context(user_id)
+    cross_session = "" if is_group else get_cross_session_context(user_id)
     if cross_session:
         system_prompt += cross_session
     
@@ -1347,9 +1380,10 @@ def answer(question: str, sender: str = "cli", user_phone: str | None = None,
         evt_ctx = get_event_context()
         if evt_ctx:
             system_prompt += evt_ctx
-        p_evt_ctx = get_personal_event_context(user_id)
-        if p_evt_ctx:
-            system_prompt += p_evt_ctx
+        if not is_group:
+            p_evt_ctx = get_personal_event_context(user_id)
+            if p_evt_ctx:
+                system_prompt += p_evt_ctx
     
     # ── Feedback Adaptation ────────────────────────────────────────────────────
     adaptation_hint = get_adaptation_hint(user_id)
@@ -1823,6 +1857,8 @@ def route_reply():
     profile = profile_mgr.touch(user_phone, push_name=push_name or None)
     from services.access_control import is_configured_creator
     canonical_creator = is_configured_creator(user_phone, sender_jid)
+    if is_group:
+        remember_group_member(session_id, user_phone)
     if bool(profile.get("is_creator")) != canonical_creator:
         profile["is_creator"] = canonical_creator
         profile_mgr.save()
@@ -2493,23 +2529,29 @@ def start_background_services() -> None:
         start_dispatcher()
     except Exception as e:
         log.warning("[Boot] Failed to start dispatcher: %s", e)
+    # Background maintenance is opt-in on constrained hosts. Each worker can
+    # consume memory, poll storage, or make outbound health requests.
+    if cfg("progress_sweeper_enabled"):
+        try:
+            from services.progress_sweeper import start_sweeper
+            start_sweeper()
+        except Exception as e:
+            log.warning("[Boot] Failed to start progress sweeper: %s", e)
+    if cfg("update_ytdlp_on_start"):
+        try:
+            from services.media import update_ytdlp_async
+            update_ytdlp_async()
+        except Exception as e:
+            log.warning("[Boot] Failed to schedule yt-dlp update: %s", e)
+    if cfg("health_heartbeat_enabled"):
+        try:
+            from services.health import start_heartbeat
+            start_heartbeat()
+        except Exception as e:
+            log.warning("[Boot] Failed to start heartbeat: %s", e)
     try:
-        from services.progress_sweeper import start_sweeper
-        start_sweeper()
-    except Exception:
-        pass
-    try:
-        from services.media import update_ytdlp_async
-        update_ytdlp_async()
-    except Exception:
-        pass
-    try:
-        from services.health import start_heartbeat
-        start_heartbeat()
-    except Exception:
-        pass
-    try:
-        start_reporter()
+        if cfg("reporter_enabled") is not False:
+            start_reporter()
     except Exception:
         pass
     try:
@@ -2528,13 +2570,14 @@ def start_background_services() -> None:
     except Exception as e:
         log.warning("[Boot] Failed to start GitHub sync: %s", e)
     # Dynamic Tools bootstrap
-    try:
-        from services.dynamic_tools import bootstrap_dynamic_tools
-        count = bootstrap_dynamic_tools()
-        if count:
-            log.info("[Boot] Loaded %d dynamic tools from GitHub", count)
-    except Exception as e:
-        log.warning("[Boot] Failed to bootstrap dynamic tools: %s", e)
+    if cfg("dynamic_tools_bootstrap_enabled"):
+        try:
+            from services.dynamic_tools import bootstrap_dynamic_tools
+            count = bootstrap_dynamic_tools()
+            if count:
+                log.info("[Boot] Loaded %d dynamic tools from GitHub", count)
+        except Exception as e:
+            log.warning("[Boot] Failed to bootstrap dynamic tools: %s", e)
     # Contact Relay cleanup (runs daily via dispatcher)
     try:
         from services.tasks import task_store
@@ -2566,8 +2609,9 @@ def start_background_services() -> None:
     # Automation engine (auto-moderation, auto-reactions, scheduled messages, etc.)
     try:
         from services.automation import start_automation
-        start_automation()
-        log.info("[Boot] Started automation engine")
+        if cfg("automation_enabled"):
+            start_automation()
+            log.info("[Boot] Started automation engine")
     except Exception as e:
         log.warning("[Boot] Failed to start automation engine: %s", e)
 

@@ -694,11 +694,11 @@ def learn_task_background(user_phone: str, text_to_learn: str, doc_name: str | N
         log.error("[Learn] Background learn task failed: %s", e)
 
 
-def get_vault_context(user_phone: str) -> str:
+def get_vault_context(user_phone: str, include_personal: bool = True) -> str:
     """Retrieve permanent personal and global vault context for system prompt."""
     vault_str = ""
 
-    personal = vault_get(f"user:{user_phone}")
+    personal = vault_get(f"user:{user_phone}") if include_personal else ""
     if personal:
         if len(personal) > 50000:
             personal = "[...older facts truncated...]\n" + personal[-50000:]

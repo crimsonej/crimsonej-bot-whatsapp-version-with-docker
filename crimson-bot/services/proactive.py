@@ -78,15 +78,17 @@ def _get_relationship(user_id: str) -> Relationship:
 
 def _should_proactive(user_id: str, trigger_type: str) -> bool:
     """Check if we should send proactive message based on relationship."""
+    if not cfg("proactive_messages_enabled"):
+        return False
     rel = _get_relationship(user_id)
     
     # Never proactive to strangers
     if rel == Relationship.STRANGER:
         return False
     
-    # Creator/Partner always
+    # Keep outreach infrequent, including to close contacts.
     if rel in [Relationship.CREATOR, Relationship.PARTNER]:
-        return True
+        return random.random() < 0.1
     
     # Close friends - high chance
     if rel == Relationship.CLOSE_FRIEND:
@@ -105,6 +107,8 @@ def _should_proactive(user_id: str, trigger_type: str) -> bool:
 
 def schedule_followup(user_id: str, trigger_type: str, context: dict = None, delay_minutes: int = 30) -> str | None:
     """Schedule a follow-up message after an interaction."""
+    # Follow-ups are a separate explicit opt-in; relationship estimates alone
+    # are not consent to receive unsolicited messages.
     if not _should_proactive(user_id, trigger_type):
         return None
     
@@ -150,6 +154,8 @@ def schedule_followup(user_id: str, trigger_type: str, context: dict = None, del
 
 def send_proactive_message(user_id: str, jid: str, message: str, trigger_type: str) -> dict:
     """Send a proactive message via bridge with dynamic LLM natural variation."""
+    if not cfg("proactive_messages_enabled"):
+        return {"ok": False, "error": "proactive_messages_disabled"}
     try:
         # Try dynamic fast LLM call for natural human variation
         try:

@@ -3210,12 +3210,20 @@ def _format_search_natural(query: str, search_result: dict) -> str:
     if not results:
         return search_result.get("answer") or f"No search results found for {query!r}."
 
-    lines = [search_result.get("answer", "").strip()]
-    lines.extend(
-        f"- {item.get('title', 'Untitled')}: {item.get('content', '').strip()} ({item.get('url', '')})"
-        for item in results[:3]
-    )
-    return "\n".join(line for line in lines if line)
+    lines = [
+        "Use the results below as research notes, not as text to repeat. Answer the user's actual question in Crimsonej's normal conversational voice. "
+        "Combine only supported facts, distinguish uncertainty or conflicting reports, and don't claim to have personally checked or experienced anything. "
+        "Give source links briefly when useful. Don't announce 'here are the search results' unless the user asked for a list."
+    ]
+    answer = search_result.get("answer", "").strip()
+    if answer:
+        lines.append(f"Search summary (possibly a snippet; verify against sources): {answer}")
+    for item in results[:3]:
+        title = (item.get("title") or "Untitled").strip()
+        content = (item.get("content") or "").strip()
+        url = (item.get("url") or "").strip()
+        lines.append(f"Source: {title}\nSnippet: {content}\nURL: {url}")
+    return "\n\n".join(lines)
 
 
 def _normalize_media_query(query: str) -> str:

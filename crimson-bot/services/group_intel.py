@@ -201,6 +201,26 @@ def update_group_context(group_jid: str, **kwargs) -> None:
     _save_group_state()
 
 
+def remember_group_member(group_jid: str, user_id: str) -> None:
+    """Record observed group participation for scoped recall in that user's DMs."""
+    if not group_jid or not user_id:
+        return
+    with _group_lock:
+        state = _group_state.setdefault(group_jid, {})
+        members = state.setdefault("observed_members", [])
+        if user_id not in members:
+            members.append(user_id)
+            state["observed_members"] = members[-500:]
+            _save_group_state()
+
+
+def get_member_group_ids(user_id: str) -> list[str]:
+    """Return groups where this user has actually been observed speaking."""
+    with _group_lock:
+        return [gid for gid, state in _group_state.items()
+                if user_id in state.get("observed_members", [])]
+
+
 def set_group_silent(group_jid: str, silent: bool = True) -> None:
     """Toggle silent mode for a group (bot will not talk to anyone in the group)."""
     update_group_context(group_jid, silent_mode=bool(silent))
@@ -556,6 +576,18 @@ def get_group_vault_context(group_jid: str) -> str:
     except Exception as e:
         log.error("[GroupVault] Error reading vault for %s: %s", group_jid, e)
     return ""
+
+
+def get_member_shared_group_context(user_id: str) -> str:
+    """Expose explicit shared group facts to a known participant in their DM."""
+    sections = []
+    for group_jid in get_member_group_ids(user_id):
+        context = get_group_vault_context(group_jid)
+        if context:
+            sections.append(context.replace("GROUP MEMORY VAULT", "SHARED GROUP MEMORY"))
+    if not sections:
+        return ""
+    return "\n[GROUP FACTS YOU MAY RECALL PRIVATELY]\n" + "\n".join(sections[:10])
 
 
 def learn_group_fact(group_jid: str, fact: str, source: str = "conversation") -> None:

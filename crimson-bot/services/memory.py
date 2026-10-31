@@ -210,9 +210,9 @@ class SessionStore:
 
 sessions = SessionStore()
 
-def get_vault_context(user_phone: str) -> str:
+def get_vault_context(user_phone: str, include_personal: bool = True) -> str:
     """Retrieve permanent personal and global vault context for system prompt."""
-    return storage_get_vault_context(user_phone)
+    return storage_get_vault_context(user_phone, include_personal=include_personal)
 
 
 def extract_preferences_background(user_phone: str, text_sample: str, nvidia_scout_fn=None):

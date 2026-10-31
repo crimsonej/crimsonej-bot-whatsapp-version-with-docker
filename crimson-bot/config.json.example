@@ -20,5 +20,6 @@
   "vision_model": "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
   "relevance_threshold": 0.08,
   "session_ttl": 1800,
-  "session_max_turns": 8
+  "session_max_turns": 8,
+  "proactive_messages_enabled": true
 }

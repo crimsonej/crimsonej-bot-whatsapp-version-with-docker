@@ -102,6 +102,7 @@ _DEFAULTS: dict[str, Any] = {
     "progress_stale_seconds": 3600,
     "health_heartbeat_interval_sec": 60,
     "owner_jid": "",                 # creator's WhatsApp JID for system-task alerts
+    "proactive_messages_enabled": True,
     "redc_home_dir": os.path.expanduser("~/.crimson"),
     # GitHub Backup Sync
     "github_sync_interval_sec": 3600,  # 1 hour

@@ -21,7 +21,8 @@ MEDIA_ROOT = "/media"
 DATA_DIR = "/data"
 AUTH_DIR = "/data/auth_info_baileys"
 BOT_NAME = "crimsonej"
-MODEL = "meta/llama-3.2-90b-vision-instruct"
+# Chat model is selected by crimson-bot/config.json (active_model).
+# Vision uses NVIDIA_VISION_MODEL separately when image analysis is requested.
 # Required - Add in Railway Dashboard:
 # NVIDIA_API_KEY = "nvapi-..."
 # GROQ_API_KEY = "gsk_..."

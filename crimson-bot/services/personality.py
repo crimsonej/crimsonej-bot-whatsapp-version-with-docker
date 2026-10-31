@@ -152,7 +152,7 @@ MOOD_TRIGGERS = {
         "weight": 1.1
     },
     Mood.SAVAGE: {
-        "keywords": ["stupid", "idiot", "dumb", "fool", "loser", "trash", "garbage", "roast", "clown", "burn", "cook", "destroy", "end", "kill"],
+        "keywords": ["roast me", "roast him", "roast her", "clown me", "burn me", "cook me"],
         "topics": ["insults", "provocation"],
         "time_ranges": [],
         "weight": 2.0
@@ -262,9 +262,7 @@ def detect_mood(message: str, user_id: str, context: dict = None, session_key: s
     # later in the response pipeline.
     roast_markers = (
         "roast me", "roast him", "roast her", "clown me", "clown him", "clown her",
-        "burn me", "destroy me", "cook me", "stupid", "idiot", "dumb", "fool",
-        "loser", "trash", "garbage", "useless", "worthless", "pathetic", "shut up", "fuck off",
-        "kys",
+        "burn me", "destroy me", "cook me",
     )
     if any(marker in msg_lower for marker in roast_markers):
         scores[Mood.SAVAGE] = max(scores.get(Mood.SAVAGE, 0), 3.5)
@@ -345,7 +343,7 @@ def build_personality_prompt(user_id: str, message: str, context: dict = None, s
         Mood.SARCASTIC: "Dry wit, playful mockery, raised eyebrow",
         Mood.BANTER: "Playful teasing, inside jokes, shared laughs",
         Mood.TOUGH: "Blunt, no-nonsense, straight talk",
-        Mood.SAVAGE: "Zero filter, cutting, brutally honest",
+        Mood.SAVAGE: "Playful roast only when explicitly requested",
         Mood.PROTECTIVE: "Fiercely loyal, defensive of inner circle",
         Mood.TIRED: "Low energy, can't be bothered, short",
         Mood.HYPED: "High energy, hyped up, loud",
@@ -355,15 +353,15 @@ def build_personality_prompt(user_id: str, message: str, context: dict = None, s
     tone_instructions = {
         Tone.WARM: "Be genuinely warm and kind. Use their name naturally. Show you care.",
         Tone.CHILL: "Stay relaxed and casual. Short replies. No big energy.",
-        Tone.BANTER: "Playful teasing. Light roasts. Inside jokes. Keep it fun.",
+        Tone.BANTER: "Light playful warmth. Tease only when clearly welcomed.",
         Tone.BLUNT: "Direct and honest. No fluff. Call it like it is. No sugarcoating.",
-        Tone.ROAST: "Savage mode. Cut deep but clever. No mercy. Funny not cruel.",
-        Tone.PROTECTIVE: "Fiercely loyal. Defend your people. Don't let anyone disrespect them.",
-        Tone.DISMISSIVE: "Short. Unimpressed. 'K.' 'Sure.' 'Whatever.' Minimal effort.",
-        Tone.HYPED: "High energy! Caps lock worthy. Exclamation points! Let's GO!",
-        Tone.SARCASTIC: "Dry wit. Raised eyebrow. Mock the obvious. Clever not cruel.",
-        Tone.TOUGH: "Hard. No-nonsense. Straight talk. Zero patience for BS.",
-        Tone.SAVAGE: "Zero filter. Brutal honesty. Cut deep. No mercy. Dark humor welcome.",
+        Tone.ROAST: "Keep a requested roast light and playful; do not target vulnerabilities.",
+        Tone.PROTECTIVE: "Be supportive without escalating conflict or attacking others.",
+        Tone.DISMISSIVE: "Be concise but still considerate and responsive.",
+        Tone.HYPED: "Sound pleased when it fits; avoid shouting or forced excitement.",
+        Tone.SARCASTIC: "Use gentle dry humor only when the context clearly invites it.",
+        Tone.TOUGH: "Be direct and calm, without hostility or contempt.",
+        Tone.SAVAGE: "Keep any explicitly requested roast light and non-cruel.",
     }
     
     # Relationship context
@@ -378,8 +376,8 @@ def build_personality_prompt(user_id: str, message: str, context: dict = None, s
     
     # Anti-AI robotic formatting enforcement
     formatting_rules = (
-        "CRITICAL FORMATTING RULES FOR HUMAN FEEL:\n"
-        "- NEVER use bullet points (•, -, *), numbered lists (1. 2. 3.), or markdown tables.\n"
+        "CONVERSATION STYLE:\n"
+        "- Use lists or formatting when they make a practical answer clearer; otherwise keep it conversational.\n"
         "- NEVER use robotic corporate intros ('As an AI...', 'Sure thing! I can help you with that', 'Here is what you need').\n"
         "- Write casually and directly like a real person typing on WhatsApp.\n"
         "- Keep paragraphs short and conversational."
@@ -388,8 +386,8 @@ def build_personality_prompt(user_id: str, message: str, context: dict = None, s
     parts = [
         f"\n[PERSONALITY STATE]",
         f"Current mood: {mood.value.upper()} — {mood_desc[mood]}",
-        f"Mood intensity: {mood_intensity:.1f}x",
         f"Tone: {tone.value.upper()} — {tone_instructions[tone]}",
+        "Keep a steady, natural voice. Treat tone guesses as weak hints; user intent and context come first. If unsure, be warm, calm, and helpful.",
         f"Relationship: {relationship.name} — {rel_context[relationship]}",
         f"Known facts: {facts[-3:] if facts else 'none'}",
         f"Interests: {', '.join(interests[:3]) if interests else 'none'}",

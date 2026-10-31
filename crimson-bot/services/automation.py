@@ -32,7 +32,7 @@ class AutomationEngine:
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._running = False
-        self._interval = int(cfg("automation_interval_sec") or 30)  # seconds between cycles
+        self._interval = max(60, int(cfg("automation_interval_sec") or 120))
         
         # Auto-moderation settings
         self._spam_threshold = int(cfg("auto_mod_spam_threshold") or 10)  # msgs per minute
